@@ -20,15 +20,26 @@ The proposed software is technically feasible as a research application. It can 
 
 The Windows application centers on three actions: **Add Profile**, **Edit Profile**, and **Query Profile**. A profile represents one pseudonymous subject, that subject's authorized training artifacts, processing workspace, model history, and current query eligibility. A profile may be created from curated training videos, an imported model package, or both.
 
+Non-English media are supported through local multilingual speech recognition. The application preserves the original-language transcript and may create a clearly separate English translation, but each initial behavioral model version is trained, calibrated, evaluated, and queried in one confirmed spoken language. Indeterminate/code-switched language evidence or the absence of a compatible active model blocks behavioral scoring rather than being hidden by translation.
+
 The application follows a **bring-your-own-video, local-only** boundary. It does not provide, discover, scrape, or bundle subject footage. Every newly added training or future-analysis video must enter as an explicitly selected local MP4 or a user-supplied direct MP4 media URL that the application downloads to a local private workspace. The public source repository contains no real subject footage, extracted biometric data, consent records, or person-specific model packages.
 
 It is not presently scientifically defensible to market the application as a general-purpose lie detector or to assume that every person has a stable detectable “tell.” The system must first test whether a repeatable person-specific signal exists and whether it survives completely new recording sessions. Some subjects may be modelable under a narrow protocol; others may have no reliable signal.
 
-The strongest defensible product has three deliberately separate outputs:
+The strongest defensible product keeps two prerequisite assessments and three analysis outputs deliberately separate.
 
-1. **Behavioral deviation:** How unusual the subject’s current facial and vocal behavior is relative to verified personal baselines.
+Prerequisite assessments:
+
+1. **Profile-subject verification:** Whether the selected face track matches the pseudonymous subject enrolled in the chosen profile strongly enough for analysis, whether the speech is associated with that face, and—only when required by the frozen profile policy—whether the voice biometrics match.
+2. **Media-authenticity assessment:** When a separately validated module is available, whether it found supported indicators of synthetic, replayed, or manipulated media; absence of an alert is not proof of authenticity.
+
+Analysis outputs:
+
+1. **Behavioral deviation:** How unusual the verified subject’s current facial and vocal behavior is relative to verified personal baselines.
 2. **Experimental deception-model score:** A model result available only after training on both verified truthful and verified intentional-deception examples and validating on independent future sessions.
 3. **Claim-evidence assessment:** Whether external evidence supports, contradicts, or cannot resolve each spoken factual claim.
+
+Profile-subject verification is a mandatory, separately constructed, versioned, and evaluated applicability gate. The behavioral/deception model must never double as an identity recognizer, and it produces no result for material that does not pass the identity, speaker-association, quality, context, and OOD gates. Media-authenticity handling follows an explicit frozen policy rather than being silently treated as identity evidence.
 
 A percentage must never be created directly from a neural-network confidence score. It may be displayed only after prospective, target-condition calibration demonstrates that the percentage has empirical meaning. Otherwise, the application must display an experimental score, a deviation score, or **cannot determine**.
 
@@ -36,13 +47,15 @@ This is therefore best framed as a **multimodal veracity research workbench**, n
 
 ## 2. The exact concepts must remain separate
 
-“Truthfulness” can refer to different things:
+The application keeps five questions separate:
 
+- **Profile-subject match and speaker association:** Does the query face match the pseudonymous person enrolled in this profile, is the analyzed speech associated with that face, and—only when required—does the voice-biometric evidence match?
+- **Media authenticity:** Is there supported evidence that the recording is synthetic, manipulated, replayed, or otherwise not an ordinary capture?
 - **Factual accuracy:** Is the proposition correct in the outside world?
 - **Speaker belief:** Does the speaker sincerely believe the proposition?
 - **Intentional deception:** Is the speaker knowingly attempting to create a false belief?
 
-These are not interchangeable. A person can sincerely state something false. A person can also make a technically true statement while intentionally creating a misleading impression through omission or framing.
+These are not interchangeable. A genuine recording of a different person can fail profile verification without being fake. A face swap or voice clone of the enrolled person can sometimes pass an ordinary identity matcher. A genuine recording can fail verification because of quality, aging, illness, pose, or equipment changes. A person can sincerely state something false, or make a technically true statement while intentionally creating a misleading impression through omission or framing.
 
 Facial and vocal behavior cannot establish factual truth by themselves. At most, those modalities may contain behavioral correlates of an experimentally defined state such as intentional deception. Factual accuracy is better assessed through the transcript and external evidence.
 
@@ -180,15 +193,25 @@ When training labels, aligned features, and validation support that granularity,
 
 For each claim or answer, the UI should show:
 
+- **Profile-subject verification:** Match, non-match, or indeterminate against the selected profile, with face coverage and verifier/threshold version.
+- **Identity continuity:** Consistent or mixed/changing across the relevant track and time range.
+- **Speaker association:** Associated, different speaker, or unable to verify speaker association; optional voice-biometric matching remains a separate field when the frozen profile policy requires it.
+- **Media-authenticity assessment:** Not assessed, no supported manipulation detected, possible synthetic/manipulated media, or inconclusive. This is separate from subject identity.
+- **Spoken-language evidence:** Confirmed BCP 47 tag, unable-to-determine state, or unsupported code-switching state, with confidence and usable-speech coverage.
+- **Language-model routing:** Selected compatible active model, no active model for the confirmed tag, or required language dependency unavailable.
 - **Model applicability:** Does this footage resemble validated conditions?
 - **Media quality:** Are the correct face and voice measurable?
 - **Behavioral deviation:** How unusual is this segment relative to the subject’s baselines?
 - **Experimental deception-model score:** Only if both-class training and validation requirements are satisfied.
 - **Uncertainty:** Confidence interval or uncertainty band.
 - **Claim evidence:** Supported, contradicted, disputed, unresolved, or non-factual.
-- **Reasons for abstention:** Missing face, poor audio, unfamiliar context, insufficient data, model instability, or failed calibration.
+- **Reasons for abstention:** Missing face, poor audio, indeterminate/code-switched language, no compatible active language model, unavailable dependency, unfamiliar context, insufficient data, model instability, or failed calibration.
+
+Together these fields form the result vector. They remain separate dimensions; the application never compresses identity, authenticity, applicability, behavioral direction, uncertainty, and factual evidence into one “truth” number.
 
 The default outcome is **cannot determine**, not forced binary classification.
+
+The UI must not use **not real** as a technical result because it ambiguously conflates a wrong person with manipulated media. The user-facing identity label for a sufficiently supported non-match is **Does not match profile subject**. At query scope its explanation is **This video cannot be evaluated with the selected profile**; at segment scope it is **This segment was not scored**. Poor-quality or conflicting identity evidence produces **Unable to verify profile subject**, not non-match. A face match paired with adequately established different speech produces **Different speaker — this segment was not scored**; insufficient association evidence produces **Unable to verify speaker association — this segment was not scored**. Manipulation screening, when available, uses **Possible synthetic or manipulated media** and is never presented as proof that a video is fake or genuine.
 
 The Query UI may present transcript sentences with clickable timestamps, but a presentation row is not automatically an independent claim or prediction unit. Result granularity must match the model's labeled and validated target. A whole-video model cannot manufacture sentence-level probabilities; sentence rows may only show a clearly shared parent result. An uncalibrated score is never shown with a percent sign. A calibrated percentage, if ever permitted, is labeled as an estimated probability of intentional deception under the named profile/protocol/context—not truth confidence or factual truth.
 
@@ -259,6 +282,8 @@ For controlled collection, truth-versus-deception instructions should be randomi
 
 Training on TV interviews and evaluating on future comparable TV interviews is more defensible than transferring the model to podcasts, courtrooms, home videos, or unrelated settings. Situational matching reduces confounding but does not eliminate it.
 
+Spoken language is part of the validated context because language changes vocabulary, syntax, discourse structure, rhythm, timing, and prosody. The initial behavioral model contract is single-language: all eligible target-subject training, calibration, and evaluation material for one model version uses the same user-confirmed language. A profile may eventually hold separate validated model versions for different languages, but the application does not pool languages into one behavioral model unless that multilingual design is separately evaluated and accepted.
+
 TV interviews can still differ in:
 
 - topic sensitivity and personal stakes;
@@ -271,6 +296,8 @@ TV interviews can still differ in:
 - camera, microphone, editing, compression, and broadcast chain.
 
 Truth and deception examples must not be separated by episode or production source. If all truthful labels come from one interview and all deceptive labels from another, the model may learn the host, microphone, camera, topic, or episode rather than deception.
+
+Language must also be balanced across conditions. A dataset in which sincere-truth material is in one language and intentional-deception material is in another is ineligible because the model could learn language rather than behavior.
 
 ### 5.4 Independent experimental units
 
@@ -336,6 +363,14 @@ Five to ten recordings may be enough for engineering QA of ingest, tracking, tra
 
 Generic binary-model validation literature often uses at least 100 independently supported events and 100 non-events as a starting benchmark, and approximately 200 of each for flexible calibration curves. Those figures do not transfer mechanically to this project: claims inside one recording are clustered, context matching narrows eligibility, and person-specific effects may be weak. They are a warning that a percentage-bearing result will require many independent prospective outcomes, not a promise that any fixed video count is adequate. [Riley et al.](https://onlinelibrary.wiley.com/doi/10.1002/sim.9025)
 
+### 5.9 Profile-subject identity enrollment and evaluation
+
+Profile-subject verification is a separate one-to-one biometric task. Enrollment uses multiple independently confirmed sessions when available, not truth/deception labels, folder names, or the behavioral classifier. Every contributing face and optional voice sample is reviewed as belonging to the selected profile subject; contaminated or ambiguous enrollment material is excluded.
+
+Identity validation uses complete held-out genuine sessions plus independent impostor subjects who contributed no enrollment sample. Frames, excerpts, retakes, and synchronized camera views from one capture event remain in the same partition. Thresholds are frozen before prospective evaluation and are tested across relevant pose, lighting, compression, device, microphone, appearance, and voice changes. A small enrollment set cannot substantiate an extremely low false-match rate.
+
+Identity decisions use a conservative match threshold, a conservative non-match threshold, and an abstention region. The gate is evaluated independently of the behavioral model and cannot be tuned using query truth/deception outcomes.
+
 ## 6. End-to-end processing pipeline
 
 ```mermaid
@@ -348,34 +383,49 @@ flowchart TB
 
     subgraph Training["A. Enrollment, labeling, and training"]
         T1["Verified truthful, intentional-deception, and control sessions"] --> T2["FFmpeg decode and synchronization"]
-        T2 --> T3["Vision, audio, and transcript feature extraction"]
-        T3 --> T4["Human-reviewed whole-video or segment intent labels and context metadata"]
+        E1["Independently confirmed profile-subject enrollment sessions"] --> T2
+        T2 --> T3["Vision, audio, and multilingual transcript feature extraction"]
+        T3 --> LC["Confirmed single-language behavioral-model contract"]
+        LC --> T4["Human-reviewed whole-video or segment intent labels and context metadata"]
         T4 --> T5["Grouped training, ablation, and validation"]
         T5 --> T6["Independent calibration and OOD thresholds"]
-        T6 --> M["Versioned profile model and model card"]
+        T6 --> BM["Versioned behavioral model and model card"]
+        T3 --> IE["Independent identity enrollment and genuine/impostor validation"]
+        IE --> IM["Versioned identity templates, gate policy, and evaluation card"]
     end
 
     subgraph Analysis["B. Analyze a future T+1 video"]
-        A1["New video"] --> A2["Media and context quality checks"]
-        A2 --> A3["Select and track subject"]
+        A1["New video"] --> A2["Decode and media-quality checks"]
+        A2 --> MA["Separate provenance and manipulation assessment"]
+        MA --> AP["Frozen authenticity policy"]
+        AP -->|Allows analysis| A3["Select and track subject"]
+        AP -->|Blocks analysis| N["Cannot determine"]
         A3 --> V["Vision AI"]
         A3 --> AU["Audio and speaker AI"]
-        A3 --> ST["Timestamped speech-to-text"]
-        V --> F["Time-aligned claim feature timeline"]
-        AU --> F
-        ST --> F
+        A3 --> ST["Timestamped multilingual speech-to-text"]
+        V --> ID["One-to-one profile-subject and face-speaker gate"]
+        AU --> ID
+        ID -->|Required identity and speaker gates pass| F["Time-aligned claim feature timeline"]
+        ID -->|Non-match, indeterminate, or speaker failure| N
+        ST --> LG["Confirmed language routes to compatible active model"]
+        BM --> LG
+        LG -->|Match and adequate coverage| F
+        LG -->|No compatible model or indeterminate language| N
         F --> P["Subject-specific inference"]
-        M --> P
+        IM --> ID
+        BM --> P
         P --> G["Calibration, uncertainty, and OOD gate"]
         G -->|Applicable| R["Validated target-granularity experimental results"]
-        G -->|Not applicable| N["Cannot determine"]
+        G -->|Not applicable| N
         ST --> E["Separate claim and evidence analysis"]
         E --> R
     end
 
     I --> T1
     I --> A1
-    QP["Imported query-only .vwpkg"] --> P
+    QP["Imported query-only .vwpkg"] --> AP
+    QP --> ID
+    QP --> P
     TP["Imported trainable .vwpkg"] --> T5
 ```
 
@@ -385,18 +435,53 @@ The application is not one large language model watching an MP4. It is an orches
 
 ### 7.1 Subject association
 
-The user selects the subject’s face. Models then:
+The user confirms the profile subject’s face and associated speaker during enrollment, and selects the intended track when a query contains multiple people. A dedicated identity subsystem then:
 
 - detect and track the selected face across cuts;
 - determine whether the subject is visible;
 - identify speaker turns;
 - associate the subject’s voice with the visible face;
+- perform one-to-one verification against the profile's numeric face and, when required, voice enrollment templates;
+- detect identity changes or inconsistent face/voice pairings across cuts and segments;
 - exclude the host, other guests, voiceovers, and B-roll;
 - emit confidence and missingness values.
 
-Segments with uncertain identity or speaker association must be excluded or flagged.
+This subsystem is an applicability gate, not a deception feature. The deception classifier must not be used to decide who the person is, and identity-match scores must not become inputs to the behavioral score. Only target-subject speech segments that pass the frozen identity and face-speaker association policy may proceed to behavioral inference.
 
-### 7.2 Visual feature extraction
+Identity verification is one-to-one against the selected pseudonymous profile; it is not open-set identification and does not establish a civil or legal identity. Query eligibility preserves independent fields rather than forcing every condition into one enum:
+
+- **Selection state:** ready, or **Choose the profile subject** before a biometric decision is attempted.
+- **Face biometric decision:** `Match`, `NonMatch`, or `Indeterminate`.
+- **Identity continuity:** `Consistent` or `MixedOrChanging`; verified target segments may remain eligible even when other segments contain another person, but a whole-video model abstains unless its frozen coverage rule passes.
+- **Speaker association:** `Associated`, `DifferentSpeaker`, or `Indeterminate`. Optional voice-biometric identity is recorded separately and is required only when the frozen profile policy says so.
+- **Capability/readiness:** ready, needs identity enrollment, incompatible verifier, or worker failure. A profile that lacks a required compatible identity gate is not query-ready; a runtime worker failure produces **Analysis unavailable — identity verifier could not run**, never an identity non-match.
+
+The face biometric decision uses two frozen thresholds with an abstention band:
+
+- **Matches profile subject for analysis:** adequate-quality evidence is at or above the acceptance threshold.
+- **Does not match profile subject:** adequate-quality evidence is at or below the non-match threshold. No behavioral/deception output is produced.
+- **Unable to verify profile subject:** the result lies between thresholds or evidence is too short or poor. No behavioral/deception output is produced.
+
+A matching face does not make all speech eligible. **Different speaker — this segment was not scored** is shown for an adequate-evidence association mismatch. **Unable to verify speaker association — this segment was not scored** is shown when the association evidence is indeterminate. If required face and voice biometric decisions disagree, the query is indeterminate rather than a forced face-only or voice-only result.
+
+A raw cosine similarity, speaker score, or neural confidence is not an identity probability. If exposed for research, it is labeled **identity match score**, has no percent sign, and is displayed with its verifier/threshold version. Match and non-match thresholds require genuine same-subject comparisons from held-out sessions plus independent impostor comparisons. Report false-match, false-non-match, failure-to-acquire, and abstention rates at the selected operating point; NIST likewise distinguishes verification false-match and false-non-match errors and the threshold tradeoff between them. [NIST biometric error measurement](https://www.nist.gov/blogs/taking-measure/tale-two-errors-measuring-biometric-algorithms)
+
+### 7.2 Media authenticity and attack screening
+
+Identity verification does not establish media authenticity. Wrong-person footage, replay attacks, face swaps, reenactment, avatars, dubbed audio, and voice clones are separate cases. Offline MP4 analysis must not claim camera liveness. A future attack/manipulation module reports only **Media authenticity not assessed**, **No supported manipulation detected**, **Possible synthetic or manipulated media**, or **Inconclusive**. NIST evaluations show that software presentation-attack and morph detectors have attack- and domain-dependent limitations, so negative screening is not proof of authenticity. Content Credentials may provide cryptographically bound provenance assertions, but cryptographic provenance and learned manipulation detection remain separate evidence types; valid provenance describes signed history rather than proving every depicted event is true. [NIST presentation-attack evaluation](https://nvlpubs.nist.gov/nistpubs/ir/2023/NIST.IR.8491.pdf), [NIST morph guidance](https://pages.nist.gov/frvt/reports/morph/fate_morph_4B_NISTIR_8584.pdf), [C2PA specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html)
+
+Every accepted model/package freezes one of two authenticity policies. **Informational** is the default while no validated detector is required; **Required** is allowed only after the named detector and attack scope pass their validation contract.
+
+| Authenticity result | Informational policy | Required policy |
+|---|---|---|
+| Media authenticity not assessed | Continue only if every other gate passes; show the limitation | Block behavioral output |
+| No supported manipulation detected | Continue if every other gate passes; never claim authenticity | Continue if every other gate passes |
+| Possible synthetic or manipulated media | Block behavioral output | Block behavioral output |
+| Inconclusive | Continue only with a prominent limitation | Block behavioral output |
+
+The policy and result are stored separately. A package cannot silently downgrade `Required` to `Informational`, and unsupported detector categories are disclosed rather than treated as negative findings.
+
+### 7.3 Visual feature extraction
 
 Candidate measurements include:
 
@@ -417,7 +502,7 @@ Visual extraction must sit behind a versioned adapter so that a tracker or model
 
 OpenFace remains useful as a research comparison, but its noncommercial research license prevents it from becoming a required dependency of the distributable open-source application. Its implementation must not be copied into the project. [OpenFace license](https://github.com/TadasBaltrusaitis/OpenFace/blob/master/OpenFace-license.txt)
 
-### 7.3 Audio feature extraction
+### 7.4 Audio feature extraction
 
 Candidate measurements include:
 
@@ -435,9 +520,17 @@ The distributable baseline should use permissively licensed, locally executed co
 
 OpenSMILE/eGeMAPS remains a useful research comparison, but openSMILE's research/noncommercial terms prevent it from becoming a required dependency of a generally reusable open-source release without separate permission. Its measurements may inform independent feature-design experiments; its code is not copied or bundled. [openSMILE license](https://github.com/audeering/opensmile/blob/master/LICENSE)
 
-### 7.4 Speech recognition and text features
+### 7.5 Speech recognition and text features
 
-Local speech recognition produces word timestamps and a draft transcript. The initial candidate is local Whisper inference through whisper.cpp or another audited MIT-compatible runtime; no hosted transcription API is required. Whisper's source and model weights are MIT-licensed. The original ASR output and any human-corrected version must be preserved separately inside the authorized workspace and are never included in a `.vwpkg` export. [Whisper](https://github.com/openai/whisper), [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
+Local speech recognition produces word timestamps and a draft transcript. The initial candidate is a multilingual Whisper model executed locally through whisper.cpp or another audited MIT-compatible runtime; English-only `.en` models are not sufficient for the product requirement. No hosted transcription API is required. Whisper supports multilingual speech recognition, spoken-language identification, and translation to English for compatible multilingual models, but performance varies substantially by language and available training data. [Whisper documentation](https://github.com/openai/whisper/blob/main/README.md), [Whisper paper](https://cdn.openai.com/papers/whisper.pdf), [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
+
+The application automatically proposes a spoken-language tag and confidence from usable target-subject speech, then asks the user to confirm or correct it before training or query scoring. Store normalized BCP 47 language tags together with the detector/runtime version, evidence coverage, confidence, and reviewer override; the tag is context and routing metadata, never a truth/deception label. A correction changes the audited confirmed tag and recalculates routing, but it cannot override inadequate target-speech coverage or unsupported code-switching. Short, noisy, or mixed-language speech can therefore remain **Unable to determine spoken language** or **Code-switched speech is not supported for behavioral scoring** after review. [BCP 47 / RFC 5646](https://www.rfc-editor.org/rfc/rfc5646.html)
+
+The original-language transcript is authoritative and remains visually distinct from both a human correction and any optional English translation. The initial behavioral text-feature pipeline consumes the immutable raw ASR tokens/timestamps, not human-corrected or translated text. Corrections and translations are presentation/evidence aids and stay outside behavioral features. A future corrected-text pipeline is allowed only when corrections are completed under an outcome-blinded, versioned adjudication protocol before labels are available; it must audit correction rate by outcome and compare raw-ASR versus corrected-text ablations. The ASR output, correction, and translation stay inside the authorized workspace and are never included in a `.vwpkg` export.
+
+Transcript storage, editing, search, and synchronized display preserve Unicode original script, punctuation, and bidirectional text. Rendering supports right-to-left and mixed-direction rows without forcing transliteration. Unicode normalization, tokenization, word/character error metrics, and sentence boundaries are language-contract decisions and must not destructively rewrite the preserved ASR or corrected source text.
+
+For the initial release, every behavioral model version declares one canonical BCP 47 tag, an explicit `LanguageCompatibilityPolicy`, and the exact ASR/tokenization/text-feature contract used for it. The default policy accepts only the canonical tag; region, script, dialect, or other tags are accepted only through an explicit allowlist/range whose equivalence has been validated. There is no implicit base-language, parent-tag, or locale fallback. Query target speech must route to a compatible active model before any behavioral score is produced. If a profile has training in multiple languages, build separate immutable candidate models per language. Code-switched material may still be transcribed, but it receives no behavioral result unless language boundaries and same-language segment scoring have been separately validated at the model's target granularity.
 
 Candidate text/timing measurements include:
 
@@ -451,7 +544,9 @@ Candidate text/timing measurements include:
 
 Topic and source leakage are major risks. Learned text embeddings or large-language-model features should initially be evaluated only as separate ablations, not silently mixed into the core score.
 
-### 7.5 Personalized classifier
+Text and timing measurements are language-specific. Pronoun use, word counts, hesitation tokens, sentence boundaries, and translation artifacts cannot be assumed comparable across languages; each language pipeline requires its own versioned normalization and validation.
+
+### 7.6 Personalized classifier
 
 The first model should use pretrained systems for perception and a comparatively simple per-subject classifier:
 
@@ -475,15 +570,19 @@ If metadata alone predicts the label, the dataset is confounded.
 
 An imported query-only ONNX model is frozen inference data, not a resumable training checkpoint. An imported trainable package may support a new candidate model only by combining its compatible finalized feature rows with features from new curated media and rerunning the complete grouped training and validation protocol.
 
-### 7.6 Calibration and out-of-distribution detection
+### 7.7 Calibration and out-of-distribution detection
 
 Quality rejection happens before learned inference. The system then assesses whether the new feature distribution resembles the model’s validated training conditions.
 
 Out-of-distribution means **unlike the validated data**. It does not mean deceptive.
 
+Profile-subject non-match, identity indeterminacy, face-speaker conflict, optional voice-biometric disagreement, spoken-language evidence, language-model routing, authenticity status, poor media quality, and contextual OOD are independent gate outcomes. They remain separate in storage and UI, and none may be converted into or combined numerically with a deception score. Identity, face-speaker association, adequate language evidence, and compatible active-model routing are always required; voice identity follows the frozen modality policy; authenticity follows the frozen Informational/Required policy above. Any required gate that rejects or abstains blocks downstream behavioral output for the affected target granularity.
+
+Language evidence and model routing are stored separately. The evidence state is **Confirmed language: `{tag}`**, **Unable to determine spoken language**, or **Code-switched speech is not supported for behavioral scoring**. Routing is **Using active `{tag}` model**, **No active behavioral model for `{tag}`**, or **Required language dependency unavailable**. Every non-ready state blocks behavioral scoring but not transcription or optional translation. Translation never changes the confirmed tag or creates a compatible model.
+
 For small datasets, a low-parameter sigmoid/Platt or temperature calibrator is more realistic than a highly flexible calibrator. It must be fitted using predictions from independent calibration sessions, never the classifier’s fitting data.
 
-### 7.7 Optional evidence and language-model module
+### 7.8 Optional evidence and language-model module
 
 A separate module may:
 
@@ -526,6 +625,8 @@ VerityWorkbench.sln
     FFmpeg orchestration, probing, proxies, and timestamp mapping
   VerityWorkbench.Jobs
     Worker lifecycle, progress, cancellation, caching, and recovery
+  VerityWorkbench.Identity
+    Enrollment templates, face/speaker verification, fusion policy, thresholds, and reports
   VerityWorkbench.Inference
     ONNX Runtime, feature contracts, calibration, OOD, and abstention
   VerityWorkbench.Data
@@ -546,8 +647,11 @@ VerityWorkbench.sln
 | ffprobe validation and timestamp mapping | Facial landmarks/action units |
 | Transcoding configuration | Voice activity and speaker models |
 | Human label entry and evidence | Speech recognition |
+| Frozen BCP 47 model-language matching, user confirmation, and code-switching policy | Spoken-language identification and optional translation |
 | Feature schema and missingness rules | Optional speech/text embeddings |
 | Enforcement of grouped data splits | Subject-specific classifier |
+| Frozen identity thresholds, abstention band, required-modality policy, and downstream blocking | Face and speaker embedding/matching models |
+| Face-speaker conflict and segment-coverage decision policy | Optional media-manipulation detectors |
 | Metric and audit calculations | Modality fusion |
 | Frozen quality and abstention rules | Probability calibrator |
 | Model/package version checks | Statistical OOD model |
@@ -629,6 +733,13 @@ The user chooses the profile workspace when adding the profile. The download-sta
   Models/
     <model-version>/
       model.onnx
+      Identity/
+        face-template.bin
+        speaker-template.bin
+        verifier-contract.json
+        identity-policy.json
+        identity-evaluation.json
+      language-contract.json
       preprocessing.json
       feature-schema.json
       calibration.json
@@ -656,6 +767,7 @@ Each artifact manifest records:
 - environment details;
 - timestamps;
 - training, calibration, and test session/capture-group IDs;
+- canonical BCP 47 model tag and compatible-tag allowlist/range, detector/ASR/tokenizer/raw-text provenance versions, language-confidence/coverage policy, and code-switching policy;
 - profile lineage, parent model version, compatibility contract, and promotion state where applicable.
 
 Python-versus-C# inference parity must be tested before accepting an ONNX export. A destination import also verifies feature schema, preprocessing hash, ONNX opset/runtime support, and required worker/model versions before allowing queries.
@@ -666,7 +778,7 @@ Add Profile and Edit Profile accept a VerityWorkbench package (`.vwpkg`), curate
 
 Two private export types are supported:
 
-1. **Query-only package:** the frozen ONNX model, preprocessing contract, feature schema, calibration, OOD and quality thresholds, model card, compatibility manifest, and checksums. It enables local query-video processing without the original training media but cannot extend the original training history.
+1. **Query-only package:** the frozen behavioral ONNX model, minimum numeric face/optional voice identity templates, identity verifier contract and decision policy, canonical BCP 47 model language plus explicit compatible-tag allowlist/range, exact multilingual ASR/tokenization/raw-text-feature provenance and language-routing contract, preprocessing contract, feature schema, calibration, authenticity/OOD/quality policies, model card, compatibility manifest, and checksums. The verifier contract contains either an allowlisted portable verifier model/weights when redistribution and platform support permit, or the exact ID and cryptographic hash of a required app-bundled verifier. Import preflight fails as **incompatible** if any required identity, multilingual ASR, tokenizer, or language-detection dependency is unavailable; it never substitutes another component or bypasses a gate. The package enables local query-video processing without the original training media but cannot extend the original training history.
 2. **Trainable profile package:** everything in the query-only package plus the minimum finalized numeric model-input features, coded intent labels, independent-session and capture grouping metadata, historical split/audit metadata, training configuration, and sanitized provenance required to reproduce training. It never contains original media.
 
 The input combinations behave as follows:
@@ -680,11 +792,11 @@ The input combinations behave as follows:
 | Trainable | Yes | Retrain a new candidate from the combined compatible old and new features. |
 | None | None | Reject profile creation because it has no usable input. |
 
-Continued training means building a new immutable model version from combined compatible feature data, not merely adjusting imported weights. The application reruns grouped model selection, validation, calibration, OOD fitting, and eligibility checks. Previously exposed test results remain audit evidence but are not treated as a new locked prospective test. An unsupported feature schema must be processed with an installed compatible legacy pipeline or rejected; because media is never exported, old features cannot be regenerated under a newer schema.
+Continued training means building a new immutable model version from combined compatible feature data, not merely adjusting imported weights. Only data with a compatible confirmed model language and language-processing contract may be combined; another language creates a separate candidate lineage unless a multilingual behavioral model has been explicitly validated. The application reruns grouped model selection, validation, calibration, OOD fitting, and eligibility checks. Previously exposed test results remain audit evidence but are not treated as a new locked prospective test. An unsupported feature schema must be processed with an installed compatible legacy pipeline or rejected; because media is never exported, old features cannot be regenerated under a newer schema.
 
-The active validated model remains available during ordinary importing, extraction, and retraining. A candidate is promoted atomically only after integrity, compatibility, Python/C# parity, scientific-validation, and eligibility checks pass. Cancellation or failure never replaces the active model. This continuity does not apply after consent withdrawal or required deletion.
+The active validated model for each confirmed language remains available during ordinary importing, extraction, and retraining. A candidate is promoted atomically only into its matching language slot after integrity, compatibility, Python/C# parity, scientific-validation, and eligibility checks pass. Cancellation or failure never replaces an active model. This continuity does not apply after consent withdrawal or required deletion.
 
-ONNX and C# runtime portability allow the same validated calculation to run on a compatible second machine; they do not validate a new person, camera, context, population, or protocol. The destination still processes every query MP4 locally and applies quality and OOD gates.
+ONNX and C# runtime portability allow the same validated calculation to run on a compatible second machine; they do not validate a new person, language, camera, context, population, or protocol. The destination still processes every query MP4 locally and applies the same identity, speaker-association, spoken-language, quality, context, OOD, and abstention gates. A legacy package missing required identity artifacts is **Needs identity enrollment**; one missing a language contract is incompatible. Neither condition silently bypasses a gate.
 
 ### 8.7 One-file `.vwpkg` format and export rules
 
@@ -700,18 +812,18 @@ Export uses a strict allowlist rather than copying a directory and deleting unwa
 6. Calculate the exact encrypted file size and final package checksum.
 7. Show the review, then save exactly one `.vwpkg` file.
 
-The review shows package type, profile alias, model version, represented independent-session counts, exact final byte size, included artifact categories, encryption and integrity state, and the statement **Original media and media derivatives are not included**.
+The review shows package type, profile alias, model version, represented independent-session counts, exact final byte size, included artifact categories, encryption and integrity state, and the statement **Original media and media derivatives are not included**. If numeric identity templates are included, the review lists **Biometric identity templates** explicitly and requires authorization to share sensitive derived biometric data.
 
 The following are prohibited:
 
 - original or downloaded MP4 files;
 - playback proxies, extracted audio, frames, face crops, thumbnails, or other media fragments;
 - partial downloads, processing intermediates, caches, and temporary files;
-- original ASR or corrected transcript text and free-text claim/evidence content;
+- original ASR, corrected, or translated transcript text and free-text claim/evidence content;
 - local paths, URLs, credentials, query parameters, or fragments;
 - scripts, executables, native libraries, plugins, symlinks, nested archives, or ONNX external-data references.
 
-There is no export override for any prohibited category: source media and all listed media/content derivatives are never exportable. Trainable packages contain only models, finalized numeric features actually consumed by the model, coded labels linked to opaque IDs, grouping metadata, configurations, and sanitized provenance. Numeric features and embeddings can still reveal sensitive behavioral or content information, so export requires a derived-data sharing attestation and encryption.
+There is no export override for any prohibited category: source media and all listed media/content derivatives are never exportable. Query-only packages may contain only the minimum numeric identity templates/centroids and frozen identity policy required to gate the represented subject; face crops, voice recordings, and other media remain prohibited. Trainable packages contain only models, finalized numeric features actually consumed by the model, coded labels linked to opaque IDs, grouping metadata, configurations, and sanitized provenance. Numeric features and embeddings can still reveal sensitive biometric, behavioral, or content information, so export requires a derived-data sharing attestation and encryption.
 
 Treat every imported `.vwpkg` as untrusted. Before promotion, verify authenticated encryption, manifest schema, entry digests, package type/version, pseudonymous profile lineage, feature/preprocessing hashes, ONNX opset/runtime compatibility, allowed operators, declared size/count limits, and the absence of traversal paths or prohibited content. Extraction occurs only inside a quota-limited private import-job folder and never fetches dependencies or follows embedded links.
 
@@ -757,19 +869,23 @@ Dependencies with no license, research-only/noncommercial terms, ambiguous model
 The initial database should model:
 
 - **Project:** purpose, owner, protocol version, consent policy, and retention policy.
-- **Profile:** stable pseudonymous lineage ID, display name, user-selected workspace and download roots, readiness, active model version, pending changes, consent status, withdrawal status, and model eligibility.
+- **Profile:** stable pseudonymous lineage ID, display name, user-selected workspace and download roots, readiness, active model version by confirmed language, pending changes, consent status, withdrawal status, and model eligibility.
 - **Subject:** pseudonymous ID and the consent/protocol records associated with the profile; no real-world identity is required by the software.
-- **Media asset:** original hash, approved source type, sanitized source reference, rights/consent attestation and provenance, user-entered recording-date label, verified training class, active/archived state, local storage state, stream metadata, and quality.
+- **Media asset:** original hash, approved source type, sanitized source reference, rights/consent attestation and provenance, user-entered recording-date label, verified training class, detected/user-confirmed BCP 47 language metadata, active/archived state, local storage state, stream metadata, and quality.
 - **Download:** sanitized source metadata, `.part` and resume-manifest paths, received and expected byte counts, strong validator, resumability state, and user action history.
 - **Session or capture group:** stable group ID, associated synchronized camera views, format, interviewer, topic, stakes, rehearsal, device, environment, production source, synchronization metadata, and camera-angle roles. The display-date label is not proof of independence.
 - **Processing job:** unique inspectable folder, job kind, state, stage timings, progress, cancellation reason, worker identities, and produced-artifact references.
-- **Segment:** start/end timestamps, speaker, question, answer, claim, and quality.
+- **Segment:** start/end timestamps, speaker, detected/user-confirmed language, language confidence/coverage, code-switch boundary, question, answer, claim, and quality.
 - **Label:** label scope, factual status, belief status, intent status, verification method, evidence/provenance, annotator/reviewer, and confidence.
 - **Feature artifact:** pipeline version, schema, hashes, missingness, and storage path.
-- **Experiment:** frozen outcome, feature set, groups, splits, seeds, metrics, and protocol.
-- **Model version:** immutable profile lineage, parent/import lineage, training data, classifier, calibrator, OOD and quality rules, compatibility contract, validation result, active/candidate/archived state, and model card.
+- **Identity enrollment:** profile/subject lineage, contributing independently confirmed sessions, face and optional voice template versions, aggregation policy, required modalities, consent/withdrawal state, and template hashes.
+- **Identity verification:** analysis/segment, selected face track, per-modality quality and match scores, verifier and threshold versions, face decision (`Match`, `NonMatch`, or `Indeterminate`), continuity (`Consistent` or `MixedOrChanging`), coverage, optional voice-biometric decision, and abstention reason.
+- **Speaker association:** analysis/segment, selected face track, speaker turn, association decision (`Associated`, `DifferentSpeaker`, or `Indeterminate`), evidence/quality, and abstention reason.
+- **Media-authenticity assessment:** analysis/segment, separate cryptographic-provenance status, detector versions, supported attack categories, manipulation decision (`NotAssessed`, `NoSupportedManipulationDetected`, `PossibleManipulation`, or `Inconclusive`), frozen policy (`Informational` or `Required`), and limitations. It is not an identity or deception label.
+- **Experiment:** frozen outcome, canonical model language, explicit tag-compatibility policy, raw-ASR/corrected-text provenance policy, language-processing contract, feature set, groups, splits, seeds, metrics, and protocol.
+- **Model version:** immutable profile lineage, parent/import lineage, training data, classifier, canonical model language and explicit tag allowlist/range, multilingual ASR/tokenization/text-feature/input-provenance and language-routing contracts, identity templates/verifier contract/modality policy, authenticity policy, calibrator, OOD and quality rules, compatibility contract, validation result, active/candidate/archived state, and model card.
 - **Model package:** query-only or trainable type, package version, represented model version, exact size, checksum, encryption/integrity state, compatibility metadata, and import/export audit data.
-- **Analysis:** model version, input hash, per-segment results, applicability, uncertainty, and abstention.
+- **Analysis:** model version, input hash, separate language-evidence and active-model-routing states, detected/confirmed BCP 47 tag, user correction and coverage/code-switch evidence, per-segment identity/speaker/authenticity gates, applicability, uncertainty, behavioral result when eligible, and abstention.
 - **Audit event:** append-only record of imports, label edits, archive/unarchive, download pause/resume/discard, processing cancellation, training, model promotion, analysis, package import/export, withdrawal, and deletion.
 
 ## 10. Application screens and workflow
@@ -782,7 +898,7 @@ The primary navigation presents three actions:
 2. **Edit Profile**
 3. **Query Profile**
 
-Profile cards show the pseudonymous display name, active model version, readiness, pending changes, and background job status. States include `Draft`, `Downloading`, `Processing`, `Needs Review`, `Training`, `Validating`, `Ready — Baseline Only`, `Ready — Experimental Model`, `Ready — Imported Query Model`, `Cancelled`, `Update Failed`, and `Cannot Model Reliably`. During an ordinary update, the last validated model remains clearly identified and queryable until a replacement passes every promotion gate.
+Profile cards show the pseudonymous display name, query-ready language/model versions, readiness, pending changes, and background job status. States include `Draft`, `Downloading`, `Processing`, `Needs Review`, `Training`, `Validating`, `Ready — Baseline Only`, `Ready — Experimental Model`, `Ready — Imported Query Model`, `Cancelled`, `Update Failed`, and `Cannot Model Reliably`. During an ordinary update, the last validated model for each language remains clearly identified and queryable until a same-language replacement passes every promotion gate.
 
 ### 10.2 Add Profile
 
@@ -797,7 +913,9 @@ The Add Profile flow:
 7. Confirm acquisition rights, subject consent, intended use, retention, and the provenance of the assigned training condition.
 8. Choose **Cancel** or **Save & Process**. Cancel discards unsaved setup. Save & Process returns to the main view while work continues in the background.
 
-After decoding begins, the user selects the subject's face, confirms speaker association, and reviews ambiguous tracking. A profile with a query-only imported package may become query-ready after compatibility checks without processing historical training videos.
+After decoding begins, the user selects the subject's face, confirms face-speaker association, confirms voice identity only when required by the profile policy, and reviews ambiguous tracking. Identity enrollment is built only from independently confirmed sessions. Contamination, mixed identity, or insufficient usable face/voice coverage blocks identity readiness. Changing identity-enrollment membership, the selected face/voice segments, subject confirmation, required modalities, source media, archive state, or withdrawal state creates new identity artifacts or invalidates the affected candidate; changing an intent label alone does not. Accepted identity artifacts are never silently mutated.
+
+The multilingual ASR worker proposes the spoken language for each usable target-subject video/segment, and the user confirms or corrects it before training. The user then chooses the candidate model language from those confirmed values. Initial candidate models accept only same-language training, calibration, and evaluation material; other languages remain available for a separate candidate rather than being silently mixed. A profile with a query-only imported package may become query-ready after compatibility, identity-gate, and language-contract checks without processing historical training videos.
 
 ### 10.3 Edit Profile
 
@@ -810,13 +928,14 @@ Edit Profile allows the user to:
 - archive or unarchive existing training videos;
 - reprocess selected active training videos with the current compatible pipeline;
 - inspect media and processing folders;
+- review detected/confirmed spoken-language metadata and build separate candidates for additional languages;
 - import a newer compatible query-only or trainable `.vwpkg`;
-- export the active model;
+- choose a language and export its active model;
 - submit relevant changes with **Save & Process**.
 
-Archiving retains the media and audit history but excludes the item from future candidate training. Permanent deletion and consent withdrawal remain separate actions. Saving a material change creates a new processing job and immutable candidate model version. A failed or cancelled update never replaces the active validated model.
+Archiving retains the media and audit history but excludes the item from future candidate training. Permanent deletion and consent withdrawal remain separate actions. Saving a material change creates a new processing job and immutable candidate model version. A failed or cancelled update never replaces the active validated model for that language.
 
-Reprocessing reads the immutable validated local MP4 and starts a new bounded job with a new pipeline-configuration identity. It may reuse only artifacts whose source and configuration hashes prove compatibility; otherwise it creates new versioned derivatives without overwriting the prior accepted artifacts. Reprocessing cancellation or failure leaves both the source and active model unchanged.
+Reprocessing reads the immutable validated local MP4 and starts a new bounded job with a new pipeline-configuration identity. It may reuse only artifacts whose source and configuration hashes prove compatibility; otherwise it creates new versioned derivatives without overwriting the prior accepted artifacts. Reprocessing cancellation or failure leaves both the source and every active language model unchanged.
 
 When a package is attached through Edit Profile, its pseudonymous profile-lineage identifier must match. The application rejects an unrelated person's package rather than silently merging profiles.
 
@@ -830,17 +949,42 @@ Cancelling a processing job stops the full worker tree, closes every stream and 
 
 The Query Profile flow:
 
-1. Select a query-ready profile by name.
+1. Select a profile with at least one query-ready language model.
 2. Select a local MP4 or enter a direct HTTP(S) MP4 URL and confirm the applicable rights/consent attestation.
 3. For a remote input, finish or resume the download and finalize local MP4 validation before analysis starts.
-4. Confirm the correct subject if multiple faces or speakers appear.
-5. Run media, identity, speaker, context, feature, OOD, and model-applicability checks.
-6. Open the synchronized results view.
+4. Detect face tracks and speaker turns; if multiple people appear, select the intended profile subject.
+5. Run the separate provenance/manipulation assessment and one-to-one face verification, plus voice verification when the frozen profile policy requires it.
+6. Confirm face-to-speaker association and identity continuity across the material. Cuts, B-roll, voice-over, mixed identities, and face/voice conflict are handled per segment and may force abstention.
+7. Detect the target subject's spoken language, show its confidence/coverage, allow a user correction, and select the profile's active model for that confirmed BCP 47 language. If no compatible language model exists, stop behavioral scoring.
+8. Apply media quality, context, OOD, feature, and model-applicability gates.
+9. Pass only eligible, identity-verified, same-language target-subject material to behavioral inference, then open the synchronized results view.
+
+Before selection, a multi-person query shows **Choose the profile subject**. After selection, the UI preserves separate results:
+
+- face biometric decision: **Matches profile subject for analysis**, **Does not match profile subject**, or **Unable to verify profile subject**;
+- identity continuity: **Consistent** or **Mixed or changing subjects**, with eligibility resolved at the trained target granularity;
+- speaker association: **Associated**, **Different speaker — this segment was not scored**, or **Unable to verify speaker association — this segment was not scored**;
+- optional voice-biometric decision, shown separately and enforced only when the frozen profile policy requires it.
+
+Non-match requires adequate-quality evidence below the frozen non-match threshold. Poor quality, inadequate coverage, or score uncertainty produces indeterminate rather than non-match. Every non-match, indeterminate identity decision, failed speaker association, required voice disagreement, or insufficient continuity/coverage result blocks the behavioral/deception output for the affected scope. A query-level failure explains **This video cannot be evaluated with the selected profile**; a row-level failure explains **This segment was not scored**. Missing or incompatible identity artifacts prevent the profile from becoming query-ready; a worker failure is reported as **Analysis unavailable — identity verifier could not run**, not as an identity result.
+
+The language UI preserves two independent fields:
+
+- **Language evidence:** **Confirmed language: `{tag}`**, **Unable to determine spoken language**, or **Code-switched speech is not supported for behavioral scoring**.
+- **Model routing:** **Using active `{tag}` model**, **No active behavioral model for `{tag}`**, or **Required language dependency unavailable**.
+
+Only confirmed, adequately covered language evidence routed to a compatible active model is eligible for behavioral scoring. A user correction updates the audited tag and reruns routing but cannot override inadequate speech coverage or unsupported code-switching. Every other state can still be transcribed and optionally translated, but translation never converts it into an eligible behavioral query. Later segment scoring may include only confirmed compatible-language segments after that exact behavior is independently validated.
+
+The interface does not use **not real** as an identity result. A different genuine person can fail the identity gate, while manipulated media depicting the enrolled subject may pass it. Media authenticity is reported separately as **Media authenticity not assessed**, **No supported manipulation detected**, **Possible synthetic or manipulated media**, or **Inconclusive**. Possible manipulation always blocks behavioral output. Not-assessed and inconclusive results follow the frozen Informational/Required policy in Section 7.2. No supported manipulation detected is not proof that the media is authentic.
 
 The results view displays a video player, current playback timestamp, and time-aligned transcript sentence, answer, or claim rows. Each row has a clickable start timestamp that seeks the player. The original ASR and any corrected transcript remain separate inside the workspace.
 
 Each eligible result row keeps the following visually separate:
 
+- profile-subject verification and face-speaker association;
+- identity continuity and optional voice-biometric decision;
+- media-authenticity/provenance status;
+- language-evidence state, detected/confirmed BCP 47 tag, active-model-routing state, and any coverage/code-switching limitation;
 - model applicability and media quality;
 - behavioral deviation;
 - experimental deception-model score, without a percent sign when uncalibrated;
@@ -848,7 +992,9 @@ Each eligible result row keeps the following visually separate:
 - separate factual-evidence status;
 - reason for abstention or **cannot determine**.
 
-The interface never labels an output `% truth`, `truth confidence`, or sentence truthfulness, and it never treats one minus a deception score as factual truth. Transcript sentences are presentation and seek units, not automatically independent statistical observations. Output granularity must match the model's trained and validated target: a whole-video model may show only a shared video/answer result, while true per-answer or per-claim output requires aligned labels, features, grouped evaluation, and calibration at that level. Query results are never automatically recycled as training labels.
+Before calibration, an eligible query may show a directional **Experimental behavioral direction** from **More consistent with verified sincere-truth examples** to **More consistent with verified intentional-deception examples**. It is unitless, model-version-specific, not linearly interpretable, and not comparable across profiles or model versions. Its orientation and display transform are frozen and versioned; it has no percent sign and is not rendered on a 0–100 scale that would imply probability. The gauge is hidden rather than set to 0%, 50%, or another placeholder when any required identity or applicability gate fails. Only after Section 11.5 passes may the same eligible output be labeled **Estimated probability of intentional deception under this profile, protocol, and context**, with uncertainty.
+
+The interface never labels an output `% truth`, `truth confidence`, or sentence truthfulness, and it never treats one minus a deception score as factual truth. Identity, authenticity, applicability, and behavioral values are never multiplied or collapsed into a single confidence. Transcript sentences are presentation and seek units, not automatically independent statistical observations. Output granularity must match the model's trained and validated target: a whole-video model may show only a shared video/answer result, while true per-answer or per-claim output requires aligned labels, features, grouped evaluation, and calibration at that level. Query results are never automatically recycled as training labels.
 
 ### 10.6 Synchronized label and tracking review
 
@@ -870,6 +1016,9 @@ The interface never labels an output `% truth`, `truth confidence`, or sentence 
 
 ### 10.8 Training and validation
 
+- Build and validate identity enrollment/templates independently of truth/deception labels.
+- Display genuine/impostor identity results, threshold versions, modality conflicts, abstention, and wrong-subject score leakage separately from behavioral-model metrics.
+- Train, calibrate, and evaluate each initial behavioral model in one confirmed language; reject cross-condition language confounding and validate the complete language gate.
 - Run constant-prior and metadata-only baselines.
 - Train unimodal and fused models from the currently eligible grouped data.
 - Display ablations, grouped performance, reliability curves, and uncertainty.
@@ -914,6 +1063,12 @@ Use grouped nested validation:
 
 Grouping variables include explicit session or synchronized capture-group ID, episode, prompt/topic, device, interviewer, source, and production condition. Dependent observations—including simultaneous views, excerpts, retakes, frames, windows, and transcript rows—must never cross split boundaries. The user-entered recording-date label is used only for display and sorting; it is not used to infer independence or as a model, calibration, OOD, or eligibility input. If future temporal validation needs time ordering, collect a separate provenance-bearing verified collection-order field. [Grouped validation guidance](https://scikit-learn.org/stable/modules/cross_validation.html#cross-validation-iterators-for-grouped-data)
 
+Identity-gate development uses mutually disjoint enrollment, threshold-development, and locked evaluation sets. All derivatives of one capture group remain together. Impostor identities used for locked evaluation do not contribute enrollment or threshold selection; evaluation includes both representative impostors and prespecified hard impostors such as lookalikes and, only when available and consented, relatives or twins.
+
+For an initial language-specific behavioral model, every fitting, selection, calibration, and evaluation group uses the same confirmed model language. Language is audited across outcome classes and controls so it cannot identify the label. If multiple language-specific candidates exist for one profile, their data, preprocessing, calibration, and prospective claims remain separate.
+
+Language-identification and routing development use disjoint threshold-development and locked evaluation sets, with all derivatives from one capture group kept together. Qualified reviewers create independent reference language tags, original-language transcripts/timestamps, and code-switch boundaries without using the detector output as ground truth; an ordinary user confirmation is operational metadata, not automatic evaluation truth. Locked tests include prespecified similar-language/dialect hard negatives, code-switched speech, short/noisy speech, and intended region/script/accent/proficiency variants.
+
 ### 11.3 Required metrics
 
 Discrimination:
@@ -940,17 +1095,58 @@ Uncertainty and robustness:
 - abstention coverage and error rate;
 - source-removal and artifact tests.
 
-Overall accuracy alone is insufficient.
+Language and transcription quality:
+
+- spoken-language identification accuracy, confusion matrix, indeterminate/code-switch rate, and usable-speech coverage for each declared supported language;
+- correct compatible-active-model routing, no-model abstention, unavailable-dependency handling, and incorrect cross-language routing rates under the frozen exact-tag/allowlist/range policy;
+- original-language word error rate or character error rate as appropriate, plus timestamp/alignment error;
+- code-switch boundary and per-segment language accuracy when code-switching support is claimed;
+- results by language, locale/dialect or accent where available, audio quality, device, and speaker;
+- rate and effect of audited user language corrections;
+- raw-ASR versus outcome-blinded corrected-text ablations if corrected text is ever proposed as a model input;
+- end-to-end behavioral performance and abstention after the language gate, reported separately for every model language.
+
+These rates use capture-group-clustered confidence intervals, and frozen go/no-go limits apply to the relevant upper confidence bounds rather than point estimates. Report language-identification confidence/coverage, indeterminate/code-switch state, ASR/alignment error, user override and correction rate, token/text-feature missingness, and routing outcome separately by sincere-truth, intentional-deception, and each control condition.
+
+Identity-gate evaluation is reported separately from behavioral-model evaluation:
+
+- false-match rate at the acceptance threshold: the proportion of impostor trials incorrectly accepted as `Match`;
+- false-non-match rate at the acceptance threshold: the proportion of genuine trials not accepted, reported together with its separate hard non-match and indeterminate components;
+- genuine hard-non-match rate below the frozen non-match threshold, plus genuine and impostor indeterminate rates in the abstention band;
+- ROC and DET curves, with equal-error rate only as a secondary summary rather than a deployment threshold;
+- failure-to-acquire rate, indeterminate rate, and usable coverage;
+- face-only, voice-only, and required fused-modality results;
+- when voice biometrics are required, performance by enrollment-language/query-language pair or separately validated language-specific voice templates;
+- face/voice conflict and incorrect speaker-association rates;
+- genuine-subject rejection across held-out sessions and relevant capture drift;
+- wrong-subject score leakage: the proportion of impostor queries that receive any behavioral/deception result;
+- query-level and segment-level results with confidence intervals clustered by genuine capture group and impostor identity/capture group;
+- performance by relevant demographic/accessibility and media-quality groups.
+
+Identity thresholds are selected without using behavioral labels and evaluated prospectively against genuine held-out sessions and impostors absent from enrollment. Frozen go/no-go limits apply to the relevant upper confidence bounds, not only point estimates. End-to-end reporting includes failures and abstentions from the complete gated pipeline; it does not report only the behavioral classifier on an oracle-selected correct-subject subset.
+
+When a media-authenticity detector is supported, its validation is also separate:
+
+- bona-fide false-alert rate, attack miss rate, and inconclusive coverage, each with uncertainty;
+- attack-specific results for the declared replay, face-swap, reenactment, generated-video, dubbing, voice-clone, or injection categories;
+- generator/tool-held-out and dataset/source-held-out tests;
+- results under supported codecs, recompression, resizing, frame-rate changes, post-processing, and relevant OOD conditions;
+- frozen attack-miss and false-alert upper-confidence limits for any `Required` authenticity policy;
+- cryptographic provenance coverage and verification results reported separately from learned detector results.
+
+Overall accuracy alone is insufficient for either subsystem.
 
 ### 11.4 Leakage tests
 
 Required negative controls include:
 
 - metadata-only prediction;
+- language-pipeline-metadata-only prediction using language ID confidence/coverage, indeterminate/code-switch flags, ASR/alignment error, override/correction rate, and text-feature missingness;
 - training on production artifacts with behavioral features removed;
 - shuffled labels within valid grouping constraints;
 - source/episode prediction from feature vectors;
 - models with face, audio, text, or context individually removed;
+- raw-ASR versus corrected-text features when any corrected-text pipeline is evaluated;
 - testing after removing backgrounds, overlays, or non-subject audio where appropriate.
 
 The goal is to determine whether the model learned deception-related behavior or an accidental shortcut.
@@ -964,13 +1160,19 @@ A percentage is permitted only if:
 3. Calibration uses separate complete sessions.
 4. Reliability is demonstrated across many independent prospective sessions/outcomes in the target condition and relevant score range.
 5. Uncertainty is reported.
-6. The context and quality gates pass.
-7. Performance remains materially above the class-prior and metadata-only baselines.
-8. Calibration prevalence matches the intended target population, or a justified prior adjustment is documented.
+6. The frozen face-identity, face-speaker association, identity-continuity, and any required voice-biometric gates pass.
+7. Adequately covered confirmed language evidence routes to the selected active model under its frozen exact-tag/allowlist/range compatibility policy.
+8. The frozen authenticity policy permits analysis.
+9. The context, media-quality, and OOD gates pass.
+10. Performance remains materially above the class-prior and metadata-only baselines.
+11. Calibration prevalence matches the intended target population, or a justified prior adjustment is documented.
+12. Calibration and reliability are demonstrated for the complete gated pipeline and its accepted-query population, not only for an oracle-filtered behavioral classifier.
 
 Otherwise, display **experimental model score**, **behavioral deviation**, or **cannot determine**.
 
-An uncalibrated score is displayed without a percent sign. A permitted percentage is labeled **Estimated probability of intentional deception under this profile, protocol, and context** and includes uncertainty and applicability. Its complement is not factual truth. An imported package must carry the exact calibration population, prevalence assumptions, target granularity, protocol, and context, and the destination applies the same gates before displaying it.
+Identity acceptance, hard non-match, indeterminate, speaker-association failure, language-evidence/routing outcomes, language-pipeline quality/missingness/correction fields, and authenticity blocking/abstention rates are reported separately by sincere-truth, intentional-deception, stress/control, and relevant context groups. Material class-dependent gate behavior or prediction from language-pipeline metadata is treated as selection bias/leakage and blocks a probability claim until it is understood and prospectively validated.
+
+An uncalibrated score is displayed without a percent sign or probability-like 0–100 scale. A permitted percentage is labeled **Estimated probability of intentional deception under this profile, protocol, and context** and includes uncertainty and applicability. Its complement is not factual truth. An imported package must carry the exact calibration population, prevalence assumptions, target granularity, protocol, context, and frozen gate policies, and the destination applies the same gates before displaying it.
 
 ### 11.6 Subject eligibility
 
@@ -980,6 +1182,7 @@ The system must permit the conclusion that a subject is not modelable. A subject
 - calibration is unstable;
 - results depend on a single session or topic;
 - metadata predicts labels;
+- language or language-pipeline metadata identifies the outcome class, or no compatible validated active model exists for the confirmed query tag;
 - signals drift substantially across prospectively ordered collection sessions;
 - error or abstention rates exceed frozen limits.
 
@@ -987,7 +1190,7 @@ The system must permit the conclusion that a subject is not modelable. A subject
 
 Any change to eligible training membership creates a new candidate version and invalidates the old candidate's calibration and evaluation claims for that changed dataset. Historical models, splits, and metrics remain immutable for audit. The application may reuse compatible cached feature artifacts, but it reruns the prescribed training and validation workflow and requires new prospective evidence for new scientific claims.
 
-The active model pointer changes only through an atomic promotion after all frozen checks pass. Update cancellation, worker failure, package incompatibility, or failed validation leaves the prior active version unchanged. Consent withdrawal or required deletion is an exception: affected models are disabled immediately rather than kept queryable.
+An active model pointer is maintained separately for each confirmed language and changes only through an atomic same-language promotion after all frozen checks pass. Update cancellation, worker failure, package incompatibility, or failed validation leaves the prior active version unchanged. Consent withdrawal or required deletion is an exception: every affected language model is disabled immediately rather than kept queryable.
 
 ## 12. Security, privacy, legal, and ethical constraints
 
@@ -999,6 +1202,7 @@ Video, voice, face geometry, transcripts, and inferred behavioral traits are sen
 - direct media URLs are used only for an explicit user-requested download into the user's private local workspace;
 - source URLs are sanitized before persistence so credentials, signed query parameters, and fragments never enter logs or reports;
 - per-project or per-subject encryption keys and encrypted backups;
+- identity embeddings, templates, thresholds, and verification records are treated as sensitive derived biometric data subject to consent, purpose limitation, encryption, retention, export authorization, withdrawal, and verified deletion;
 - BitLocker or equivalent full-disk protection;
 - Windows DPAPI/Credential Manager for local secrets, with separate authenticated portable encryption for `.vwpkg` transfer because DPAPI is machine-bound;
 - least-privilege access;
@@ -1039,12 +1243,19 @@ Publishing an incorrect “liar” classification could also create defamation, 
 | No stable signal exists for a subject | Prospective session-held-out testing | Performance remains at chance or unstable |
 | Model detects stress rather than deception | Truthful-stress and calm-deception controls | Stress controls erase performance |
 | Topic, source, or device leakage | Counterbalancing, metadata baseline, grouped splits | Metadata/source predicts labels |
+| Language or language-pipeline artifacts become label shortcuts | One canonical language policy per model, outcome balance, pipeline-metadata baseline, and raw/corrected-text ablations | Language, ASR quality, overrides/corrections, or text missingness predicts the label or differs systematically by condition |
 | Incorrect intent labels | Evidence provenance and ambiguous/unknown class | Labels cannot be independently supported |
 | Small effective sample size | Count sessions, perform pilot-based power analysis | Confidence intervals remain too wide |
 | Distribution shift | Context-quality and OOD gates | T+1 falls outside validated conditions |
+| Indeterminate/code-switched query language or no compatible active model | Audited language evidence, explicit tag-compatibility routing, adequate-speech threshold, and abstention | Language cannot be determined reliably, code-switching is unsupported, or no validated model accepts the confirmed tag |
+| Translation changes behavioral text features | Preserve/use original-language text; keep translation as a separate presentation/evidence artifact | A translated token or translation-derived feature reaches an unvalidated behavioral model |
 | Misleading percentage | Separate calibration and reliability testing | Prospective calibration fails |
 | Behavioral drift over time | Periodic locked revalidation | Model degrades across prospectively ordered sessions |
-| Missing or wrong subject/audio | Face-speaker association and quality thresholds | Identity confidence is insufficient |
+| False profile-subject acceptance | Independent one-to-one identity verifier, conservative locked threshold, held-out impostors, and downstream blocking | Any impostor receives a behavioral/deception result above the frozen leakage limit |
+| False rejection of the genuine subject | Match/non-match abstention band, quality-aware decisions, and held-out genuine sessions spanning capture drift | Genuine rejection or indeterminate rate exceeds the frozen limit |
+| Face/voice conflict or wrong speaker association | Separate face and voice evidence, temporal association, explicit conflict state, and segment-level abstention | Conflicted or unassociated speech receives a behavioral result |
+| Cross-language voice-verification drift | Evaluate every required enrollment/query language pair or use language-specific voice templates | A required language pair lacks prospective identity-gate validation |
+| Manipulated media passes identity matching | Separate provenance/manipulation assessment and attack-specific evaluation | The frozen attack-miss upper-confidence limit is exceeded or policy blocking is bypassed |
 | Automation bias and false accusation | Separate outputs, abstention, prohibited-use policy | Users treat scores as proof |
 | Privacy or biometric harm | Consent, local processing, encryption, deletion | Consent or lawful basis is absent |
 | Unauthorized or opaque media acquisition | User-initiated local/direct-URL inputs, rights attestation, no site ripper | The source or consent cannot be supported |
@@ -1076,8 +1287,11 @@ Publishing an incorrect “liar” classification could also create defamation, 
 
 ### Milestone 2 — Reproducible feature extraction
 
+- Select and license the identity verifier and weights; freeze enrollment provenance/consent requirements and implement encrypted template key management, withdrawal, and verified deletion before persisting real identity templates.
 - Add subject face selection and tracking review.
 - Add visual, audio, speaker, ASR, and quality workers.
+- Add local multilingual ASR, spoken-language evidence, audited user confirmation/override, original-language transcript display, optional separate English translation, explicit compatible-active-model routing, and language abstention.
+- Add independently reviewed face and optional voice enrollment templates, one-to-one profile-subject verification, face-speaker association, identity continuity, and explicit match/non-match/indeterminate decisions.
 - Store versioned Parquet features and artifact manifests.
 - Add worker cancellation, restart, caching, and deterministic contracts.
 - Benchmark a declared 30-second reference MP4 on reference hardware, record stage timings, and implement learned local ETA reporting.
@@ -1095,6 +1309,7 @@ Publishing an incorrect “liar” classification could also create defamation, 
 - Finalize consented experimental protocol.
 - Collect truthful, deceptive, stressful-truth, and calm-deception sessions.
 - Record topic, prompt, interviewer, stakes, rehearsal, device, and environment.
+- Keep each initial behavioral-model dataset in one confirmed spoken language; collect another language as a separate balanced candidate dataset.
 - Conduct pilot-based sample-size planning.
 
 ### Milestone 5 — Baselines and grouped evaluation
@@ -1102,12 +1317,17 @@ Publishing an incorrect “liar” classification could also create defamation, 
 - Train class-prior, metadata-only, unimodal, and fused models.
 - Add grouped nested validation and leakage tests.
 - Report discrimination, calibration, uncertainty, and ablations.
+- Create independent reference language/transcript/code-switch annotations and evaluate language identification, original-language transcription/timestamps, exact-tag/allowlist/range routing, code-switch abstention, raw-ASR text provenance, and language-pipeline outcome confounding separately for every supported model language.
+- Validate the identity gate separately on disjoint enrollment, threshold-development, and locked genuine/impostor evaluation sets; freeze match/non-match thresholds and report false-match, false-non-match, hard genuine non-match, genuine/impostor indeterminate, modality-conflict, and wrong-subject score-leakage rates with clustered confidence bounds.
+- Evaluate supported replay, face-swap, reenactment, generated-video, dubbing, and voice-clone cases separately from identity matching when an authenticity module is present.
 
 ### Milestone 6 — Frozen local inference
 
 - Export accepted preprocessing and models to ONNX.
 - Implement C# ONNX inference.
 - Verify Python/C# numerical parity.
+- Freeze the minimum numeric identity templates, verifier contract, modality policy, thresholds, and evaluation metadata required for portable query gating; verify decision parity as well as raw numerical parity.
+- Freeze the canonical BCP 47 model tag, explicit compatible-tag allowlist/range, multilingual ASR/tokenization/raw-text-feature versions, language confidence/coverage and code-switching rules, and language-routing test vectors in each portable package.
 - Implement query-only and trainable `.vwpkg` import/export, immutable lineage, compatibility checks, and atomic model promotion.
 - Package the model schema, preprocessing, calibration, OOD/quality rules, and model card as one encrypted ZIP-based file.
 - Add exact-size review, checksums, strict allowlisting, prohibited-media scans, hostile-archive import hardening, and colleague portability tests.
@@ -1116,6 +1336,8 @@ Publishing an incorrect “liar” classification could also create defamation, 
 
 - Freeze and preferably preregister the protocol.
 - Analyze a fully unseen future session as the first workflow and discrimination test.
+- Prospectively evaluate the complete identity-gated pipeline, including genuine drift, impostors, abstention, and the rate at which any wrong subject reaches behavioral inference.
+- Require every prospective behavioral query to produce adequate confirmed language evidence and route to a compatible active model; report evidence/routing/abstention before examining outcomes.
 - Accumulate many independent prospective sessions/outcomes spanning the relevant score range before making a probability-calibration claim.
 - Open each session’s labels only after its predictions are locked.
 - Evaluate prespecified go/no-go criteria.
@@ -1138,7 +1360,11 @@ The pilot is exploratory: use it to estimate variability, effect size, feasibili
 - calibration is acceptable in the target context;
 - results survive modality ablations and leakage tests;
 - performance is not carried by one topic, source, device, or session;
+- language and language-pipeline metadata cannot predict the outcome class, and evidence/routing meets frozen upper-confidence limits for identification, incorrect cross-language routing, no-model abstention, and indeterminate/code-switch coverage;
 - abstention reliably captures poor-quality and out-of-distribution inputs;
+- the separately validated identity gate meets frozen upper-confidence limits for false match, hard genuine non-match, indeterminate coverage, and wrong-subject score leakage before any behavioral/deception output is enabled;
+- face/voice conflicts and unassociated speech abstain, possible-manipulation alerts always block, and not-assessed/inconclusive authenticity results follow the frozen Informational/Required policy;
+- any `Required` authenticity policy meets its frozen attack-miss, bona-fide false-alert, and inconclusive-coverage upper-confidence limits;
 - security, consent, licensing, and legal requirements are satisfied;
 - an independent replication is planned before any consequential claim.
 
@@ -1158,6 +1384,11 @@ Failure is an informative research result. It should cause the system to remain 
 - Processing cancellation stops workers, closes file handles, does not promote partial results, and leaves the bounded job folder available for inspection or deletion.
 - Archived videos remain stored and audited but are excluded from future candidate models; permanent deletion and withdrawal are separate.
 - Query results use synchronized video and clickable transcript timestamps, with strict score/calibration language and abstention.
+- Non-English MP4s are supported through local multilingual ASR. The UI preserves the original-language transcript, user correction, and optional English translation as separate artifacts.
+- Each initial behavioral model version declares one canonical BCP 47 tag and explicit validated compatible-tag policy. A query must provide adequate confirmed language evidence and route to a compatible active model or behavioral scoring returns **Cannot determine**; translation never bypasses this gate.
+- Every Query Profile analysis uses separate one-to-one face identity, continuity, and face-speaker association gates before behavioral inference, with optional voice-biometric verification only when required by the frozen profile policy.
+- Face identity is `Match`, `NonMatch`, or `Indeterminate`; continuity and speaker association remain separate fields. Non-match, indeterminate identity, failed speaker association, required voice conflict, or insufficient continuity/coverage blocks the affected behavioral result.
+- A profile-subject non-match is not labeled **not real**. Media authenticity is a separate provenance/manipulation assessment governed by a frozen Informational/Required policy, and a negative screen is not proof of authenticity.
 - Two private export types exist: query-only and trainable. Every export is exactly one encrypted ZIP-based `.vwpkg` file.
 - Original videos, media derivatives, raw transcripts, source URLs, and local paths are never included in a `.vwpkg`.
 - A trainable package contains only models, finalized numeric features, coded labels, grouping metadata, configurations, and sanitized provenance.
@@ -1172,6 +1403,10 @@ Failure is an informative research result. It should cause the system to remain 
 - Initial subject count, controlled pilot design, and final power/precision calculation.
 - Detailed wording and retention rules for the user-supplied-media rights/consent attestation.
 - Exact visual/audio/text feature extractors and their commercial redistribution terms.
+- Initial supported-language list, multilingual ASR/runtime/model size, language-detection and adequate-coverage thresholds, the explicit BCP 47 tags/ranges validated for each model language, and code-switching scope.
+- Identity matcher/runtime selection, licensing, template-aggregation policy, and minimum independently confirmed enrollment coverage.
+- Whether face and voice are both required, how modality conflict is resolved, and the frozen quality/match/non-match thresholds.
+- Scope, detector choices, and attack-specific validation requirements for any optional offline media-authenticity assessment.
 - Local speech-recognition model size and reference-hardware policy.
 - Predeclared validation, calibration, and go/no-go thresholds.
 - Portable package encryption and recovery UX, optional sender-signing/authenticity policy, and compatibility support window.
@@ -1211,6 +1446,10 @@ Failure is an informative research result. It should cause the system to remain 
 - [Guo et al. — Neural-network calibration](https://proceedings.mlr.press/v70/guo17a.html)
 - [Ovadia et al. — Uncertainty under dataset shift](https://proceedings.neurips.cc/paper_files/paper/2019/hash/8558cb408c1d76621371888657d2eb1d-Abstract.html)
 - [Riley et al. — Minimum sample size for external validation of a binary prediction model](https://onlinelibrary.wiley.com/doi/10.1002/sim.9025)
+- [NIST — Biometric verification error measurement](https://www.nist.gov/blogs/taking-measure/tale-two-errors-measuring-biometric-algorithms)
+- [NISTIR 8491 — Software presentation-attack detection evaluation](https://nvlpubs.nist.gov/nistpubs/ir/2023/NIST.IR.8491.pdf)
+- [NISTIR 8584 — Face-morph detection guidance](https://pages.nist.gov/frvt/reports/morph/fate_morph_4B_NISTIR_8584.pdf)
+- [C2PA technical specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html)
 - [NIST AI Risk Management Framework](https://airc.nist.gov/airmf-resources/airmf/3-sec-characteristics/)
 - [FFmpeg documentation](https://www.ffmpeg.org/documentation.html)
 - [RFC 9110 — HTTP range and conditional request semantics](https://www.rfc-editor.org/rfc/rfc9110.html)
@@ -1221,6 +1460,8 @@ Failure is an informative research result. It should cause the system to remain 
 - [OpenSeeFace code and model license](https://github.com/emilianavt/OpenSeeFace)
 - [Silero VAD](https://github.com/snakers4/silero-vad)
 - [Whisper code and model weights](https://github.com/openai/whisper)
+- [Whisper multilingual speech-recognition paper](https://cdn.openai.com/papers/whisper.pdf)
+- [BCP 47 language tags — RFC 5646](https://www.rfc-editor.org/rfc/rfc5646.html)
 - [librosa license](https://github.com/librosa/librosa/blob/main/LICENSE.md)
 - [FFmpeg license](https://github.com/FFmpeg/FFmpeg/blob/master/LICENSE.md)
 - [GitHub repository licensing guidance](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository)

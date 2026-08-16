@@ -35,7 +35,10 @@ This repository is being implemented in small, testable slices.
 - [ ] Direct-URL resumable downloads
 - [ ] Processing-folder inspection and verified cleanup controls
 - [ ] Playback, transcription, and feature extraction
+- [ ] Local multilingual ASR, language confirmation, original-language transcripts, optional separate English translation, and compatible language-model routing
 - [ ] Training, grouped validation, calibration, and local inference
+- [ ] Query-time profile-subject identity gate and face-speaker verification
+- [ ] Separate provenance and synthetic/manipulated-media assessment
 - [ ] Query Profile workflow
 - [ ] One-file encrypted `.vwpkg` import/export
 
@@ -225,7 +228,17 @@ Edit Profile handles persistent metadata, additions, and archive/unarchive eligi
 
 ### Query Profile
 
-Query Profile will select a query-ready profile and a local/direct-URL MP4, process it locally, and show synchronized playback and timestamped transcript/answer/claim rows. Output granularity must match the trained and validated target granularity. No row will be labeled “% truth” or “truth confidence.”
+Query Profile will select a query-ready profile and a local/direct-URL MP4, process it locally, and show synchronized playback and timestamped transcript/answer/claim rows. Before any behavioral result is produced, a dedicated one-to-one gate must verify the selected face track, establish face-speaker association, and verify voice biometrics only when the frozen profile policy requires them. The behavioral model will never double as the identity verifier.
+
+Non-English audio will be transcribed locally using a multilingual ASR model. The application proposes a language, shows confidence/coverage, and lets the user confirm or correct it. A correction is audited and reruns model routing, but it cannot override inadequate target-speech coverage or unsupported code-switching. The original-language transcript remains authoritative; a human correction and optional English translation are stored and displayed separately. The UI preserves Unicode original script and supports right-to-left and mixed-direction text without forcing transliteration. The initial behavioral text pipeline uses immutable raw ASR tokens/timestamps; corrected and translated text remain presentation/evidence artifacts unless a separately controlled pipeline is trained and validated.
+
+Each initial behavioral model version declares one canonical BCP 47 tag and an explicit validated compatible-tag policy; there is no silent locale or base-language fallback. A profile can hold an independently validated active model for each supported language. The UI reports language evidence as **Confirmed language: `{tag}`**, **Unable to determine spoken language**, or **Code-switched speech is not supported for behavioral scoring**. It separately reports routing as **Using active `{tag}` model**, **No active behavioral model for `{tag}`**, or **Required language dependency unavailable**. Only the first evidence/routing combination can be scored; the video may otherwise still be transcribed or translated. Training from several languages creates separate model candidates rather than silently pooling them.
+
+The UI keeps selection, face identity, identity continuity, and speaker association separate. Multiple-person video first shows **Choose the profile subject**. Face identity is **Matches profile subject for analysis**, **Does not match profile subject**, or **Unable to verify profile subject**; continuity can be **Mixed or changing subjects**; speaker association is **Associated**, **Different speaker**, or **Unable to verify speaker association**. A query-level failure explains **This video cannot be evaluated with the selected profile**; a row-level failure explains **This segment was not scored**. Any non-passing required gate blocks the behavioral/deception output for the affected material. Missing/incompatible identity artifacts make the profile non-query-ready, while a runtime verifier failure is an analysis error rather than an identity non-match. The interface will not call a non-match “not real”: a genuine video of another person can fail the gate, and manipulated media depicting the enrolled subject may still pass it.
+
+Media authenticity will therefore be a separate result: **Not assessed**, **No supported manipulation detected**, **Possible synthetic or manipulated media**, or **Inconclusive**. Possible manipulation always blocks behavioral scoring. Not-assessed or inconclusive results continue only when the frozen package policy is **Informational**; a **Required** policy blocks them. A negative manipulation screen will not be described as proof of authenticity.
+
+For an eligible query, the initial analog display will be an uncalibrated directional experimental score from **More consistent with verified sincere-truth examples** to **More consistent with verified intentional-deception examples**, without a percent sign or probability-like 0–100 scale. It is unitless, model-version-specific, not linearly interpretable, and not comparable across profiles or versions. A percentage may appear only after the independent prospective calibration requirements in the design document pass, and then only as an **Estimated probability of intentional deception under this profile, protocol, and context**. It is never a factual truth percentage. Output granularity must match the trained and validated target granularity.
 
 ## Media, privacy, and export boundaries
 
@@ -240,10 +253,10 @@ Query Profile will select a query-ready profile and a local/direct-URL MP4, proc
 
 Every future export will produce exactly one encrypted `.vwpkg` file. Two planned types are:
 
-- **Query-only model:** frozen compatible preprocessing/model/calibration artifacts for local queries; no historical training-state extension.
+- **Query-only model:** frozen compatible preprocessing/model/calibration artifacts plus the canonical model language, explicit compatible-tag policy, multilingual ASR/tokenization/raw-text provenance and language-routing contract, minimum numeric identity templates, gate policy, and portable verifier contract required for local queries; no historical training-state extension. Import fails if a required language or identity dependency is unavailable.
 - **Trainable profile:** the query artifacts plus allowlisted numeric features, coded labels, grouping metadata, configuration, and sanitized provenance needed to retrain with new authorized videos.
 
-Neither type will contain original videos or any media derivative. Excluded material includes playback proxies, extracted audio, frames, face crops, thumbnails, media fragments, raw transcripts, free-text claims/evidence, source URLs, original local paths, credentials, executables, scripts, and plugins.
+Neither type will contain original videos or any media derivative. Excluded material includes playback proxies, extracted audio, frames, face crops, thumbnails, media fragments, original/corrected/translated transcript text, free-text claims/evidence, source URLs, original local paths, credentials, executables, scripts, and plugins. Numeric identity templates remain sensitive biometric derived data; the export review must identify them explicitly, require authorization, and keep them inside the encrypted package.
 
 ## Repository structure
 
