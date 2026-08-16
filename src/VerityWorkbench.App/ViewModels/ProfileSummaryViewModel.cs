@@ -45,13 +45,18 @@ public sealed class ProfileSummaryViewModel : INotifyPropertyChanged
 
     public string Readiness { get; }
 
-    public bool CanStartIngest => Readiness != "IngestingMedia"
-        && (PendingMediaCount > 0 || Readiness == "MediaIngestedAwaitingProbe");
+    public bool CanProcessData => Readiness is not "IngestingMedia" and not "ValidatingMedia" and not "MediaIntegrityFailed"
+        && (PendingMediaCount > 0
+            || Readiness is "MediaIngestedAwaitingProbe" or "MediaValidationFailed" or "MediaValidated");
 
     public string Status => _liveStatus ?? Readiness switch
     {
         "IngestingMedia" => "Media ingest in progress",
         "MediaIngestedAwaitingProbe" => "Media registered — awaiting validation",
+        "ValidatingMedia" => "Media validation in progress",
+        "MediaValidationFailed" => "Media validation needs attention",
+        "MediaValidated" => "Media validated — awaiting feature extraction",
+        "MediaIntegrityFailed" => "Workspace media changed — repair required",
         _ => "Draft — not processed",
     };
 

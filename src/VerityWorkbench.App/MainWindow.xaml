@@ -34,7 +34,7 @@
                     VerticalAlignment="Center"
                     Background="{ThemeResource AccentFillColorSecondaryBrush}"
                     CornerRadius="16">
-                    <TextBlock Text="Milestone 3 · local media ingest" />
+                    <TextBlock Text="Milestone 4 · MP4 media validation" />
                 </Border>
             </Grid>
         </Border>
@@ -54,7 +54,7 @@
                     <StackPanel Spacing="4">
                         <TextBlock FontWeight="SemiBold" Text="Research limitation" />
                         <TextBlock
-                            Text="This is not a general-purpose lie detector. Behavioral signals cannot establish factual truth. This milestone copies authorized local media into user-selected workspaces and produces no score or probability."
+                            Text="This is not a general-purpose lie detector. Behavioral signals cannot establish factual truth. This milestone validates app-managed MP4 audio/video streams and produces no identity, authenticity, language, behavioral score, or probability result."
                             TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
@@ -96,7 +96,7 @@
                         Click="QueryProfile_Click">
                         <StackPanel Padding="8" Spacing="5">
                             <TextBlock FontSize="18" FontWeight="SemiBold" Text="Query Profile" />
-                            <TextBlock Opacity="0.7" Text="Unavailable until validation exists" />
+                            <TextBlock Opacity="0.7" Text="Unavailable until a validated model exists" />
                         </StackPanel>
                     </Button>
                 </Grid>

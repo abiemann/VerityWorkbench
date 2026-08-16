@@ -5,4 +5,8 @@ public enum ProfileReadiness
     Draft,
     IngestingMedia,
     MediaIngestedAwaitingProbe,
+    ValidatingMedia,
+    MediaValidationFailed,
+    MediaValidated,
+    MediaIntegrityFailed,
 }

@@ -21,4 +21,11 @@
     <ProjectReference Include="..\VerityWorkbench.Data\VerityWorkbench.Data.csproj" />
     <ProjectReference Include="..\VerityWorkbench.Media\VerityWorkbench.Media.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Update="media-tools.manifest.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="appsettings.Local.json"
+          Condition="Exists('appsettings.Local.json')"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

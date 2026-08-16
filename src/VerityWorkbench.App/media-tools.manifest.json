@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "validationContractVersion": "verityworkbench.media-validation.v1",
+  "distribution": "BtbN FFmpeg-Builds",
+  "releaseTag": "autobuild-2026-08-15-13-02",
+  "variant": "win64-lgpl-8.1",
+  "buildIdentity": "n8.1.2-44-g7c533d0f86-20260815",
+  "license": "LGPL-3.0-or-later",
+  "ffmpeg": {
+    "fileName": "ffmpeg.exe",
+    "sha256": "fe6faee813ef5b4407f10db5c8f0cc50cee0b0a1a981f0b903567e2ebb7b92df"
+  },
+  "ffprobe": {
+    "fileName": "ffprobe.exe",
+    "sha256": "aaa354b9841d92b4fa5f60eaf58169055b5d9d3d0420ac553784523dfe312724"
+  }
+}

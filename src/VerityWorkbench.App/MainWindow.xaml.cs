@@ -1,9 +1,12 @@
 using System.Collections.ObjectModel;
 using System.Data.Common;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using VerityWorkbench.App.ViewModels;
 using VerityWorkbench.Core.Profiles;
 using VerityWorkbench.Core.Workspaces;
@@ -24,11 +27,13 @@ public sealed partial class MainWindow : Window
     private readonly ObservableCollection<TrainingVideoItemViewModel> _truthfulVideos = [];
     private readonly ObservableCollection<TrainingVideoItemViewModel> _deceptionVideos = [];
     private readonly LocalMediaStagingService _localMediaStagingService = new();
+    private readonly MediaValidationService _mediaValidationService = new();
     private readonly SqliteProfileCatalog _profileCatalog;
     private EditorMode _editorMode;
     private StoredProfile? _editingProfile;
     private CancellationTokenSource? _activeProcessingCancellation;
     private Guid? _activeProcessingProfileId;
+    private ProcessingJobKind? _activeProcessingKind;
     private bool _processingCanBeCancelled;
     private bool _profileStorageReady;
     private int _recoveredProcessingJobCount;
@@ -71,9 +76,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (selected.Readiness == ProfileReadiness.IngestingMedia.ToString())
+        if (IsProcessingReadiness(selected.Readiness))
         {
-            StatusText.Text = "This profile has an active media-ingest job and cannot be edited yet.";
+            StatusText.Text = "This profile has an active processing job and cannot be edited yet.";
             return;
         }
 
@@ -120,7 +125,7 @@ public sealed partial class MainWindow : Window
     }
 
     private void QueryProfile_Click(object sender, RoutedEventArgs e) =>
-        StatusText.Text = "Query Profile remains disabled by design until real processing and validation exist.";
+        StatusText.Text = "Query Profile remains disabled by design until a trained, validated model and inference pipeline exist.";
 
     private void ProfilesList_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
         UpdateProfileActionButtons();
@@ -129,7 +134,7 @@ public sealed partial class MainWindow : Window
     {
         if (_activeProcessingCancellation is not null)
         {
-            StatusText.Text = "Wait for the active media-ingest job to finish or cancel it before refreshing.";
+            StatusText.Text = "Wait for the active processing job to finish or cancel it before refreshing.";
             return;
         }
 
@@ -138,12 +143,12 @@ public sealed partial class MainWindow : Window
         AddProfileButton.IsEnabled = false;
         EditProfileButton.IsEnabled = false;
         ProcessDataButton.IsEnabled = false;
-        StatusText.Text = "Refreshing profiles and reconciling stale ingest jobs…";
+        StatusText.Text = "Refreshing profiles and reconciling stale processing jobs…";
         try
         {
             await ReloadProfilesAsync(selectedId);
             StatusText.Text = BuildLoadedProfilesStatus();
-            if (_profiles.Any(profile => profile.Readiness == ProfileReadiness.IngestingMedia.ToString()))
+            if (_profiles.Any(profile => IsProcessingReadiness(profile.Readiness)))
             {
                 StatusText.Text += " A fresh job may still be active in another app window; a job with no heartbeat for ten minutes is recovered on Refresh.";
             }
@@ -170,18 +175,20 @@ public sealed partial class MainWindow : Window
     {
         if (_activeProcessingCancellation is null)
         {
-            StatusText.Text = "No media-ingest job is running in this app window.";
+            StatusText.Text = "No processing job is running in this app window.";
             return;
         }
 
         if (!_processingCanBeCancelled)
         {
-            StatusText.Text = "Media registration is already committed and the workspace state is being finalized.";
+            StatusText.Text = "Processing results are already committed and the workspace state is being finalized.";
             return;
         }
 
         CancelProcessingButton.IsEnabled = false;
-        StatusText.Text = "Cancelling media ingest and closing open files…";
+        StatusText.Text = _activeProcessingKind == ProcessingJobKind.MediaValidation
+            ? "Cancelling media validation and closing FFmpeg files and processes…"
+            : "Cancelling media ingest and closing open files…";
         _activeProcessingCancellation.Cancel();
     }
 
@@ -197,7 +204,7 @@ public sealed partial class MainWindow : Window
     {
         if (_activeProcessingCancellation is not null)
         {
-            StatusText.Text = "A media-ingest job is already running in this app window.";
+            StatusText.Text = "A processing job is already running in this app window.";
             return;
         }
 
@@ -213,11 +220,13 @@ public sealed partial class MainWindow : Window
         var jobStarted = false;
         var databaseCompletionCommitted = false;
         var mediaIntegrityFailure = false;
+        var mediaIntegrityStateRecorded = false;
         var promotedAssets = new List<PromotedLocalMediaAsset>();
         CancellationTokenSource? heartbeatStop = null;
         Task<Exception?>? heartbeatTask = null;
         Exception? heartbeatFailure = null;
         var heartbeatAwaited = false;
+        using var progressWriteGate = new SemaphoreSlim(1, 1);
 
         async Task<Exception?> StopHeartbeatAsync()
         {
@@ -242,20 +251,35 @@ public sealed partial class MainWindow : Window
         _activeProcessingProfileId = selected.Id;
         _processingCanBeCancelled = true;
         SetProcessingUiState(isProcessing: true);
-        selected.SetLiveStatus("Preparing local media ingest…");
-        StatusText.Text = "Checking the selected profile and local MP4 sources…";
+        selected.SetLiveStatus("Preparing processing…");
+        StatusText.Text = "Checking the selected profile and active MP4 media…";
 
         try
         {
             profileStore = CreateProfileStore(selected.WorkspaceRoot);
             var profile = await profileStore.GetByIdAsync(selected.Id, processingCancellation.Token)
                 ?? throw new KeyNotFoundException("The selected profile no longer exists.");
-            if (profile.Readiness == ProfileReadiness.IngestingMedia.ToString())
+            if (IsProcessingReadiness(profile.Readiness))
             {
                 throw new ProfileProcessingActiveException(profile.Id);
             }
 
             layout = ProfileWorkspaceLayout.Create(profile.WorkspaceRoot, profile.DownloadStagingRoot);
+            var pendingVideos = profile.TrainingVideos
+                .Where(video => !video.IsArchived && video.MediaAssetId is null)
+                .OrderBy(video => video.SortOrder)
+                .ToArray();
+            if (pendingVideos.Length == 0)
+            {
+                await RunMediaValidationAsync(
+                    selected,
+                    profileStore,
+                    profile,
+                    layout,
+                    processingCancellation);
+                return;
+            }
+
             var linkedAssetIds = profile.TrainingVideos
                 .Where(video => !video.IsArchived && video.MediaAssetId is not null)
                 .Select(video => video.MediaAssetId!.Value)
@@ -293,23 +317,15 @@ public sealed partial class MainWindow : Window
                         exception is FileNotFoundException or InvalidDataException)
                     {
                         mediaIntegrityFailure = true;
+                        mediaIntegrityStateRecorded = await TryPersistMediaIntegrityFailureAsync(
+                            profileStore,
+                            profile.Id,
+                            [registeredAsset.Id]);
                         throw new InvalidDataException(
-                            "A registered workspace media copy is missing or no longer matches its recorded integrity metadata. "
-                            + "The app left all files and metadata unchanged; automatic repair is not implemented yet.",
+                            "A registered workspace media copy is missing or no longer matches its recorded integrity metadata.",
                             exception);
                     }
                 }
-            }
-
-            var pendingVideos = profile.TrainingVideos
-                .Where(video => !video.IsArchived && video.MediaAssetId is null)
-                .OrderBy(video => video.SortOrder)
-                .ToArray();
-            if (pendingVideos.Length == 0)
-            {
-                selected.SetLiveStatus(null);
-                StatusText.Text = "All active workspace copies passed length and SHA-256 verification. FFmpeg validation is the next implementation slice.";
-                return;
             }
 
             var byteLengths = new Dictionary<Guid, long>();
@@ -353,6 +369,7 @@ public sealed partial class MainWindow : Window
                 startedAtUtc,
                 processingCancellation.Token);
             jobStarted = true;
+            _activeProcessingKind = ProcessingJobKind.LocalMediaIngest;
 
             if (!await profileStore.UpdateProcessingJobProgressAsync(
                     jobId,
@@ -409,6 +426,7 @@ public sealed partial class MainWindow : Window
                 () => (
                     Volatile.Read(ref latestCompletedItems),
                     Volatile.Read(ref latestCompletedBytes)),
+                progressWriteGate,
                 processingCancellation,
                 heartbeatStop.Token);
 
@@ -518,12 +536,13 @@ public sealed partial class MainWindow : Window
                 throw new IOException("Media-ingest progress could not be persisted.", heartbeatError);
             }
 
-            if (!await profileStore.UpdateProcessingJobProgressAsync(
+            if (!await UpdateProcessingJobProgressSerializedAsync(
+                    profileStore,
+                    progressWriteGate,
                     jobId,
                     ProcessingJobState.Running,
                     pendingVideos.Length,
                     totalBytes,
-                    DateTimeOffset.UtcNow,
                     processingCancellation.Token))
             {
                 throw new InvalidOperationException("The media-ingest job stopped before completion.");
@@ -644,11 +663,13 @@ public sealed partial class MainWindow : Window
                     "Media ingest failed before completion.");
             }
 
-            var refreshWarning = jobStarted
+            var refreshWarning = jobStarted || mediaIntegrityStateRecorded
                 ? await TryReloadProfilesAfterProcessingAsync(selected.Id)
                 : null;
             StatusText.Text = mediaIntegrityFailure
-                ? "Workspace media verification failed: " + exception.Message
+                ? mediaIntegrityStateRecorded
+                    ? "Workspace media verification failed. The profile is marked as needing repair. Archive every selection linked to the affected media asset only to exclude it from the active set; automatic replacement is not implemented yet."
+                    : "Workspace media verification failed, but the repair-required state could not be saved. Refresh the profile and do not continue processing it."
                 : exception is MediaAssetConditionConflictException
                 ? "The same media content appears in both training conditions. Resolve the conflicting labels before processing again."
                 : databaseCompletionCommitted
@@ -678,19 +699,642 @@ public sealed partial class MainWindow : Window
             {
                 _activeProcessingCancellation = null;
                 _activeProcessingProfileId = null;
+                _activeProcessingKind = null;
             }
 
             _processingCanBeCancelled = false;
 
-            selected.SetLiveStatus(mediaIntegrityFailure ? "Workspace media needs repair" : null);
+            selected.SetLiveStatus(mediaIntegrityStateRecorded
+                ? "Workspace media needs repair"
+                : mediaIntegrityFailure
+                    ? "Workspace media verification failed"
+                    : null);
             SetProcessingUiState(isProcessing: false);
         }
+    }
+
+    private async Task RunMediaValidationAsync(
+        ProfileSummaryViewModel selected,
+        SqliteProfileStore profileStore,
+        StoredProfile profile,
+        ProfileWorkspaceLayout layout,
+        CancellationTokenSource processingCancellation)
+    {
+        _activeProcessingKind = ProcessingJobKind.MediaValidation;
+        var activeAssetIds = profile.TrainingVideos
+            .Where(video => !video.IsArchived && video.MediaAssetId is not null)
+            .Select(video => video.MediaAssetId!.Value)
+            .Distinct()
+            .ToArray();
+        if (activeAssetIds.Length == 0)
+        {
+            selected.SetLiveStatus(null);
+            StatusText.Text = "No active registered media is available for validation.";
+            return;
+        }
+
+        Dictionary<Guid, StoredMediaAsset> assetsById;
+        try
+        {
+            assetsById = (await profileStore.GetMediaAssetsAsync(
+                    profile.Id,
+                    processingCancellation.Token))
+                .ToDictionary(asset => asset.Id);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or IOException
+                or UnauthorizedAccessException
+                or InvalidOperationException
+                or DbException
+                or FormatException)
+        {
+            selected.SetLiveStatus(null);
+            StatusText.Text = "Registered media metadata could not be loaded. No validation job was created; refresh the profile and try again.";
+            return;
+        }
+        if (activeAssetIds.Any(assetId => !assetsById.ContainsKey(assetId)))
+        {
+            selected.SetLiveStatus("Workspace media needs repair");
+            StatusText.Text = "Media validation did not start because registered media metadata is incomplete.";
+            return;
+        }
+
+        if (activeAssetIds.All(assetId => assetsById[assetId].State == MediaAssetState.Validated))
+        {
+            try
+            {
+                selected.SetLiveStatus("Verifying registered workspace media…");
+                await VerifyRegisteredMediaAssetsAsync(
+                    layout,
+                    activeAssetIds.Select(assetId => assetsById[assetId]),
+                    processingCancellation.Token);
+                selected.SetLiveStatus(null);
+                StatusText.Text = "All active workspace copies still match their recorded integrity metadata and already have immutable media-validation results. No analysis or scoring was performed.";
+            }
+            catch (RegisteredMediaIntegrityException exception)
+            {
+                var integrityStateRecorded = await TryPersistMediaIntegrityFailureAsync(
+                    profileStore,
+                    profile.Id,
+                    [exception.MediaAssetId]);
+                var refreshWarning = integrityStateRecorded
+                    ? await TryReloadProfilesAfterProcessingAsync(profile.Id)
+                    : null;
+                selected.SetLiveStatus(integrityStateRecorded
+                    ? "Workspace media needs repair"
+                    : "Workspace media verification failed");
+                StatusText.Text = integrityStateRecorded
+                    ? "The workspace media copy changed or is missing. The profile is marked as needing repair. Archive every selection linked to the affected media asset only to exclude it from the active set; automatic replacement is not implemented yet."
+                    : "The workspace media copy changed or is missing, but the repair-required state could not be saved. Refresh the profile and do not continue processing it.";
+                if (refreshWarning is not null)
+                {
+                    StatusText.Text += " The profile list could not be refreshed.";
+                }
+            }
+
+            return;
+        }
+
+        var jobId = Guid.NewGuid();
+        var startedAtUtc = NextTimestamp(profile.UpdatedAtUtc);
+        var relativeJobPath = BuildMediaValidationJobRelativePath(jobId, startedAtUtc);
+        string? jobDirectoryPath = null;
+        var jobStarted = false;
+        var completionCommitted = false;
+        Guid? integrityFailedAssetId = null;
+        CancellationTokenSource? heartbeatStop = null;
+        Task<Exception?>? heartbeatTask = null;
+        Exception? heartbeatFailure = null;
+        var heartbeatAwaited = false;
+        using var progressWriteGate = new SemaphoreSlim(1, 1);
+        long latestCompletedBytes = 0;
+        var latestCompletedItems = 0;
+
+        async Task<Exception?> StopHeartbeatAsync()
+        {
+            if (heartbeatAwaited)
+            {
+                return heartbeatFailure;
+            }
+
+            heartbeatAwaited = true;
+            if (heartbeatStop is null || heartbeatTask is null)
+            {
+                return null;
+            }
+
+            heartbeatStop.Cancel();
+            heartbeatFailure = await heartbeatTask;
+            return heartbeatFailure;
+        }
+
+        try
+        {
+            var configuredTools = MediaToolchainConfiguration.Load();
+            var toolContract = CreateMediaValidationToolContract(configuredTools);
+
+            selected.SetLiveStatus("Checking approved FFmpeg tools…");
+            StatusText.Text = "Verifying the pinned FFmpeg and ffprobe executables before creating a validation job…";
+            var preflight = await _mediaValidationService.PreflightAsync(
+                layout,
+                layout.ProcessingRoot,
+                toolContract,
+                processingCancellation.Token);
+
+            selected.SetLiveStatus("Verifying registered workspace media…");
+            StatusText.Text = "The approved tools match. Rechecking active workspace copies before the validation job starts…";
+            await VerifyRegisteredMediaAssetsAsync(
+                layout,
+                activeAssetIds.Select(assetId => assetsById[assetId]),
+                processingCancellation.Token);
+
+            await profileStore.StartMediaValidationJobAsync(
+                profile.Id,
+                profile.UpdatedAtUtc,
+                jobId,
+                relativeJobPath,
+                startedAtUtc,
+                processingCancellation.Token);
+            jobStarted = true;
+            _activeProcessingKind = ProcessingJobKind.MediaValidation;
+            jobDirectoryPath = CreateMediaValidationJobDirectory(
+                layout,
+                relativeJobPath);
+
+            if (!await profileStore.UpdateProcessingJobProgressAsync(
+                    jobId,
+                    ProcessingJobState.Running,
+                    0,
+                    0,
+                    NextTimestamp(startedAtUtc),
+                    processingCancellation.Token))
+            {
+                throw new InvalidOperationException(
+                    "The media-validation job stopped before probing began.");
+            }
+
+            var jobAssets = await profileStore.GetMediaAssetsForValidationJobAsync(
+                jobId,
+                processingCancellation.Token);
+            if (jobAssets.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "The media-validation job has no registered media snapshot.");
+            }
+
+            heartbeatStop = new CancellationTokenSource();
+            heartbeatTask = RunProcessingHeartbeatAsync(
+                profileStore,
+                jobId,
+                () => (
+                    Volatile.Read(ref latestCompletedItems),
+                    Volatile.Read(ref latestCompletedBytes)),
+                progressWriteGate,
+                processingCancellation,
+                heartbeatStop.Token);
+
+            var registrations = new List<MediaValidationRegistration>(jobAssets.Count);
+            for (var index = 0; index < jobAssets.Count; index++)
+            {
+                processingCancellation.Token.ThrowIfCancellationRequested();
+                var asset = jobAssets[index];
+                var itemNumber = index + 1;
+                var liveStatus = $"Validating MP4 {itemNumber}/{jobAssets.Count} · full CPU decode";
+                selected.SetLiveStatus(liveStatus);
+                StatusText.Text = liveStatus + ". This may take as long as the video; Cancel Processing remains available.";
+
+                try
+                {
+                    var mediaPath = ResolveWorkspaceMediaPath(layout, asset.WorkspaceRelativePath);
+                    var metadata = await _mediaValidationService.ValidateAsync(
+                        layout,
+                        jobDirectoryPath,
+                        mediaPath,
+                        asset.Sha256,
+                        asset.ByteLength,
+                        toolContract,
+                        preflight,
+                        processingCancellation.Token);
+                    var validatedAtUtc = NextTimestamp(startedAtUtc);
+                    registrations.Add(new(
+                        asset.Id,
+                        MediaAssetState.Validated,
+                        MapValidationResult(asset.Id, metadata, validatedAtUtc),
+                        FailureMessage: null));
+                }
+                catch (MediaValidationException exception) when (
+                    IsMediaContentValidationFailure(exception.Failure))
+                {
+                    registrations.Add(new(
+                        asset.Id,
+                        MediaAssetState.ValidationFailed,
+                        Result: null,
+                        exception.Failure.ToString()));
+                }
+                catch (MediaValidationException exception) when (
+                    exception.Failure is MediaValidationFailure.IntegrityChanged
+                        or MediaValidationFailure.MediaPathInvalid)
+                {
+                    integrityFailedAssetId = asset.Id;
+                    throw;
+                }
+
+                Interlocked.Exchange(ref latestCompletedItems, itemNumber);
+                Interlocked.Add(ref latestCompletedBytes, asset.ByteLength);
+                if (!await UpdateProcessingJobProgressSerializedAsync(
+                        profileStore,
+                        progressWriteGate,
+                        jobId,
+                        ProcessingJobState.Running,
+                        itemNumber,
+                        Volatile.Read(ref latestCompletedBytes),
+                        processingCancellation.Token))
+                {
+                    throw new InvalidOperationException(
+                        "The media-validation job stopped before all results were recorded.");
+                }
+            }
+
+            var heartbeatError = await StopHeartbeatAsync();
+            if (heartbeatError is not null)
+            {
+                throw new IOException(
+                    "Media-validation progress could not be persisted.",
+                    heartbeatError);
+            }
+
+            var latestResultTimestamp = registrations
+                .Where(registration => registration.Result is not null)
+                .Select(registration => registration.Result!.ValidatedAtUtc)
+                .DefaultIfEmpty(startedAtUtc)
+                .Max();
+            await profileStore.CompleteMediaValidationJobAsync(
+                jobId,
+                registrations,
+                NextTimestamp(latestResultTimestamp),
+                processingCancellation.Token);
+            completionCommitted = true;
+            _processingCanBeCancelled = false;
+            CancelProcessingButton.IsEnabled = false;
+
+            await ReloadProfilesAsync(profile.Id);
+            var failedRegistrations = registrations
+                .Where(registration => registration.State == MediaAssetState.ValidationFailed)
+                .ToArray();
+            if (failedRegistrations.Length == 0)
+            {
+                StatusText.Text = "MP4 structure and the selected audio/video streams decoded completely. Media is validated and awaiting feature extraction; no analysis or scoring was performed.";
+            }
+            else
+            {
+                var failureCodes = string.Join(
+                    ", ",
+                    failedRegistrations
+                        .Select(registration => registration.FailureMessage)
+                        .Where(code => code is not null)
+                        .Distinct(StringComparer.Ordinal));
+                StatusText.Text = $"Media validation completed, but {failedRegistrations.Length} asset(s) need attention ({failureCodes}). No behavioral analysis or scoring was performed.";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            var heartbeatError = await StopHeartbeatAsync();
+            var terminalState = heartbeatError is null
+                ? ProcessingJobState.Cancelled
+                : ProcessingJobState.Failed;
+            var terminalStateRecorded = true;
+            if (jobStarted && !completionCommitted)
+            {
+                terminalStateRecorded = await TryTerminateProcessingJobAsync(
+                    profileStore,
+                    jobId,
+                    terminalState,
+                    heartbeatError is null
+                        ? null
+                        : "Media validation stopped because progress persistence failed.");
+            }
+
+            var refreshWarning = jobStarted
+                ? await TryReloadProfilesAfterProcessingAsync(selected.Id)
+                : null;
+            StatusText.Text = jobStarted
+                ? "Media validation cancelled. FFmpeg processes and open files were closed, no successful result was written, and the bounded Processing job folder was retained."
+                : "Media-validation preparation cancelled. No processing job was created.";
+            if (!terminalStateRecorded)
+            {
+                StatusText.Text += " The terminal job status could not be saved; use Refresh after the ten-minute recovery grace period.";
+            }
+
+            if (refreshWarning is not null)
+            {
+                StatusText.Text += " The profile list could not be refreshed.";
+            }
+        }
+        catch (RegisteredMediaIntegrityException exception)
+        {
+            var integrityStateRecorded = await TryPersistMediaIntegrityFailureAsync(
+                profileStore,
+                profile.Id,
+                [exception.MediaAssetId]);
+            var refreshWarning = integrityStateRecorded
+                ? await TryReloadProfilesAfterProcessingAsync(profile.Id)
+                : null;
+            StatusText.Text = integrityStateRecorded
+                ? "The workspace media copy changed or is missing. The profile is marked as needing repair; no validation job was created."
+                : "The workspace media copy changed or is missing, but the repair-required state could not be saved. Refresh the profile and do not continue processing it.";
+            if (refreshWarning is not null)
+            {
+                StatusText.Text += " The profile list could not be refreshed.";
+            }
+        }
+        catch (Exception exception) when (IsExpectedMediaValidationWorkflowException(exception))
+        {
+            await StopHeartbeatAsync();
+            var terminalStateRecorded = true;
+            if (jobStarted && !completionCommitted)
+            {
+                terminalStateRecorded = await TryTerminateProcessingJobAsync(
+                    profileStore,
+                    jobId,
+                    ProcessingJobState.Failed,
+                    "Media validation failed before completion.");
+            }
+
+            var integrityStateRecorded = false;
+            if (integrityFailedAssetId is not null && terminalStateRecorded)
+            {
+                integrityStateRecorded = await TryPersistMediaIntegrityFailureAsync(
+                    profileStore,
+                    profile.Id,
+                    [integrityFailedAssetId.Value]);
+            }
+
+            var refreshWarning = jobStarted || integrityStateRecorded
+                ? await TryReloadProfilesAfterProcessingAsync(selected.Id)
+                : null;
+            StatusText.Text = integrityFailedAssetId is null
+                ? GetSafeMediaValidationFailureMessage(
+                    exception,
+                    jobStarted,
+                    completionCommitted)
+                : integrityStateRecorded
+                    ? "The workspace media copy changed during validation. The validation job stopped and the profile is marked as needing repair."
+                    : "The workspace media copy changed during validation, but the repair-required state could not be saved. Refresh the profile and do not continue processing it.";
+            if (!terminalStateRecorded)
+            {
+                StatusText.Text += " The failed job status could not be saved; use Refresh after the ten-minute recovery grace period.";
+            }
+
+            if (refreshWarning is not null)
+            {
+                StatusText.Text += " The profile list could not be refreshed.";
+            }
+        }
+        finally
+        {
+            await StopHeartbeatAsync();
+            heartbeatStop?.Dispose();
+        }
+    }
+
+    private static MediaValidationToolContract CreateMediaValidationToolContract(
+        ConfiguredMediaToolchain configuredTools) =>
+        new(
+            new MediaValidationExecutableContract(
+                configuredTools.FfprobeExecutablePath,
+                configuredTools.FfprobeSha256,
+                PreflightTimeout: TimeSpan.FromSeconds(15),
+                InvocationTimeout: TimeSpan.FromMinutes(2),
+                MaximumStandardOutputBytes: 4 * 1024 * 1024,
+                MaximumStandardErrorBytes: 256 * 1024),
+            new MediaValidationExecutableContract(
+                configuredTools.FfmpegExecutablePath,
+                configuredTools.FfmpegSha256,
+                PreflightTimeout: TimeSpan.FromSeconds(15),
+                InvocationTimeout: TimeSpan.FromHours(2),
+                MaximumStandardOutputBytes: 2 * 1024 * 1024,
+                MaximumStandardErrorBytes: 1024 * 1024),
+            configuredTools.BuildIdentity,
+            configuredTools.ValidationContractVersion);
+
+    private static string BuildMediaValidationJobRelativePath(
+        Guid jobId,
+        DateTimeOffset createdAtUtc)
+    {
+        if (jobId == Guid.Empty)
+        {
+            throw new ArgumentException("The processing job ID cannot be empty.", nameof(jobId));
+        }
+
+        var directoryName = string.Create(
+            CultureInfo.InvariantCulture,
+            $"{createdAtUtc.ToUniversalTime():yyyyMMdd'T'HHmmssfffffff'Z'}_media-validation_{jobId.ToString("N")[..12]}");
+        return Path.Combine("Processing", directoryName);
+    }
+
+    private static string CreateMediaValidationJobDirectory(
+        ProfileWorkspaceLayout layout,
+        string workspaceRelativePath)
+    {
+        var path = Path.GetFullPath(Path.Combine(
+            layout.WorkspaceRoot,
+            workspaceRelativePath.Replace('/', Path.DirectorySeparatorChar)));
+        if (Directory.GetParent(path) is not { } parent
+            || !string.Equals(
+                Path.TrimEndingDirectorySeparator(parent.FullName),
+                Path.TrimEndingDirectorySeparator(layout.ProcessingRoot),
+                StringComparison.OrdinalIgnoreCase)
+            || Directory.Exists(path)
+            || File.Exists(path))
+        {
+            throw new IOException("The media-validation processing folder is not available.");
+        }
+
+        Directory.CreateDirectory(path);
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+        {
+            throw new IOException("The media-validation processing folder is invalid.");
+        }
+
+        using var claim = new FileStream(
+            Path.Combine(path, ".job"),
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            bufferSize: 1,
+            FileOptions.WriteThrough);
+        claim.Flush(flushToDisk: true);
+        return path;
+    }
+
+    private static string ResolveWorkspaceMediaPath(
+        ProfileWorkspaceLayout layout,
+        string workspaceRelativePath) =>
+        Path.GetFullPath(Path.Combine(
+            layout.WorkspaceRoot,
+            workspaceRelativePath.Replace('/', Path.DirectorySeparatorChar)));
+
+    private async Task VerifyRegisteredMediaAssetsAsync(
+        ProfileWorkspaceLayout layout,
+        IEnumerable<StoredMediaAsset> assets,
+        CancellationToken cancellationToken)
+    {
+        foreach (var asset in assets)
+        {
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await _localMediaStagingService.VerifyExistingAssetAsync(
+                    layout,
+                    asset.Id,
+                    asset.WorkspaceRelativePath,
+                    asset.Sha256,
+                    asset.ByteLength,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException
+                    or IOException
+                    or UnauthorizedAccessException)
+            {
+                throw new RegisteredMediaIntegrityException(asset.Id);
+            }
+        }
+    }
+
+    private static StoredMediaValidationResult MapValidationResult(
+        Guid mediaAssetId,
+        ValidatedMediaMetadata metadata,
+        DateTimeOffset validatedAtUtc) =>
+        new(
+            mediaAssetId,
+            metadata.ContainerFormat,
+            metadata.ContainerMajorBrand,
+            metadata.Video.StreamIndex,
+            metadata.Video.CodecName,
+            metadata.Video.Width,
+            metadata.Video.Height,
+            metadata.Audio.StreamIndex,
+            metadata.Audio.CodecName,
+            metadata.Audio.SampleRateHz,
+            metadata.Audio.ChannelCount,
+            metadata.DurationMicroseconds,
+            metadata.Video.FrameRateNumerator,
+            metadata.Video.FrameRateDenominator,
+            metadata.Ffprobe.Version,
+            metadata.Ffprobe.CompilerIdentifier,
+            metadata.Ffprobe.Configuration,
+            metadata.Ffprobe.ConfigurationSha256,
+            metadata.Ffprobe.ExecutableSha256,
+            metadata.Ffmpeg.Version,
+            metadata.Ffmpeg.CompilerIdentifier,
+            metadata.Ffmpeg.Configuration,
+            metadata.Ffmpeg.ConfigurationSha256,
+            metadata.Ffmpeg.ExecutableSha256,
+            metadata.ValidationContractSha256,
+            metadata.DecodeCompleted,
+            metadata.DecodedDurationMicroseconds,
+            validatedAtUtc);
+
+    private static bool IsMediaContentValidationFailure(MediaValidationFailure failure) =>
+        failure is MediaValidationFailure.ProbeRejectedMedia
+            or MediaValidationFailure.UnsupportedContainer
+            or MediaValidationFailure.InvalidDuration
+            or MediaValidationFailure.MissingVideoStream
+            or MediaValidationFailure.InvalidVideoStream
+            or MediaValidationFailure.AmbiguousVideoStreams
+            or MediaValidationFailure.MissingAudioStream
+            or MediaValidationFailure.InvalidAudioStream
+            or MediaValidationFailure.AmbiguousAudioStreams
+            or MediaValidationFailure.UnsupportedCodec
+            or MediaValidationFailure.CorruptMedia;
+
+    private static bool IsExpectedMediaValidationWorkflowException(Exception exception) =>
+        exception is MediaValidationException
+            or ArgumentException
+            or ArithmeticException
+            or IOException
+            or UnauthorizedAccessException
+            or InvalidOperationException
+            or KeyNotFoundException
+            or DbException
+            or FormatException
+            or JsonException
+            or CryptographicException;
+
+    private static string GetSafeMediaValidationFailureMessage(
+        Exception exception,
+        bool jobStarted,
+        bool completionCommitted)
+    {
+        if (completionCommitted)
+        {
+            return "Media-validation results were saved, but the refreshed profile list is unavailable. Restart or select Refresh; do not retry merely to refresh the display.";
+        }
+
+        if (exception is MediaValidationException validationException)
+        {
+            if (validationException.Failure is MediaValidationFailure.ToolContractInvalid
+                or MediaValidationFailure.ToolUnavailable
+                or MediaValidationFailure.ToolIntegrityMismatch
+                or MediaValidationFailure.ToolIdentityMalformed
+                or MediaValidationFailure.ToolIdentityMismatch
+                or MediaValidationFailure.ToolLaunchFailed
+                or MediaValidationFailure.ToolIdentityTimedOut
+                or MediaValidationFailure.ToolIdentityOutputLimitExceeded)
+            {
+                return "The approved FFmpeg tools were not found or do not match this build. Check the Media Tools setup in README.md. No validation result was accepted.";
+            }
+
+            if (validationException.Failure is MediaValidationFailure.IntegrityChanged
+                or MediaValidationFailure.MediaPathInvalid)
+            {
+                return "The workspace media copy changed or is no longer at its registered location. No validation result was accepted; keep the original source for a future repair workflow.";
+            }
+
+            return $"Media validation stopped safely ({validationException.Failure}). No validation result was accepted; retry after checking the retained Processing job folder.";
+        }
+
+        if (!jobStarted && exception is FileNotFoundException or JsonException)
+        {
+            return "The approved FFmpeg tools are not configured. Follow the Media Tools setup in README.md; the profile state was not changed.";
+        }
+
+        if (exception is ProfileProcessingActiveException)
+        {
+            return "This profile already has an active processing job, possibly in another app window. Refresh after it finishes.";
+        }
+
+        if (exception is ProfileConcurrencyConflictException)
+        {
+            return "The profile changed before media validation could start. Refresh the profile list and try again.";
+        }
+
+        return jobStarted
+            ? "Media validation failed safely. No successful result was accepted; the Processing job folder was retained for inspection."
+            : "Media validation did not start. Check the local media-tool setup, refresh the profile, and try again.";
+    }
+
+    private static DateTimeOffset NextTimestamp(DateTimeOffset floor)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return now <= floor ? floor.AddTicks(1) : now;
     }
 
     private static async Task<Exception?> RunProcessingHeartbeatAsync(
         SqliteProfileStore profileStore,
         Guid jobId,
         Func<(int CompletedItems, long CompletedBytes)> readProgress,
+        SemaphoreSlim progressWriteGate,
         CancellationTokenSource processingCancellation,
         CancellationToken stopToken)
     {
@@ -699,17 +1343,25 @@ public sealed partial class MainWindow : Window
             using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
             while (await timer.WaitForNextTickAsync(stopToken))
             {
-                var progress = readProgress();
-                if (!await profileStore.UpdateProcessingJobProgressAsync(
-                        jobId,
-                        ProcessingJobState.Running,
-                        progress.CompletedItems,
-                        progress.CompletedBytes,
-                        DateTimeOffset.UtcNow,
-                        stopToken))
+                await progressWriteGate.WaitAsync(stopToken);
+                try
                 {
-                    throw new InvalidOperationException(
-                        "The media-ingest job is no longer active in profile storage.");
+                    var progress = readProgress();
+                    if (!await profileStore.UpdateProcessingJobProgressAsync(
+                            jobId,
+                            ProcessingJobState.Running,
+                            progress.CompletedItems,
+                            progress.CompletedBytes,
+                            DateTimeOffset.UtcNow,
+                            stopToken))
+                    {
+                        throw new InvalidOperationException(
+                            "The processing job is no longer active in profile storage.");
+                    }
+                }
+                finally
+                {
+                    progressWriteGate.Release();
                 }
             }
 
@@ -729,6 +1381,32 @@ public sealed partial class MainWindow : Window
         {
             processingCancellation.Cancel();
             return exception;
+        }
+    }
+
+    private static async Task<bool> UpdateProcessingJobProgressSerializedAsync(
+        SqliteProfileStore profileStore,
+        SemaphoreSlim progressWriteGate,
+        Guid jobId,
+        ProcessingJobState state,
+        int completedItems,
+        long completedBytes,
+        CancellationToken cancellationToken)
+    {
+        await progressWriteGate.WaitAsync(cancellationToken);
+        try
+        {
+            return await profileStore.UpdateProcessingJobProgressAsync(
+                jobId,
+                state,
+                completedItems,
+                completedBytes,
+                DateTimeOffset.UtcNow,
+                cancellationToken);
+        }
+        finally
+        {
+            progressWriteGate.Release();
         }
     }
 
@@ -776,6 +1454,42 @@ public sealed partial class MainWindow : Window
                 or FormatException)
         {
             // The stale-job recovery path will reconcile a terminal-state write failure.
+            return false;
+        }
+    }
+
+    private static async Task<bool> TryPersistMediaIntegrityFailureAsync(
+        SqliteProfileStore profileStore,
+        Guid profileId,
+        IReadOnlyCollection<Guid> mediaAssetIds)
+    {
+        try
+        {
+            var currentProfile = await profileStore.GetByIdAsync(
+                profileId,
+                CancellationToken.None);
+            if (currentProfile is null)
+            {
+                return false;
+            }
+
+            await profileStore.MarkMediaAssetsIntegrityFailedAsync(
+                profileId,
+                currentProfile.UpdatedAtUtc,
+                mediaAssetIds,
+                NextTimestamp(currentProfile.UpdatedAtUtc),
+                CancellationToken.None);
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or IOException
+                or UnauthorizedAccessException
+                or InvalidOperationException
+                or KeyNotFoundException
+                or DbException
+                or FormatException)
+        {
             return false;
         }
     }
@@ -880,14 +1594,61 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (textBox.DataContext is TrainingVideoItemViewModel video)
+        if (textBox.DataContext is not TrainingVideoItemViewModel video)
         {
-            video.RecordingDateLabel = textBox.Text;
+            return;
         }
 
+        video.RecordingDateLabel = textBox.Text;
         e.Handled = true;
-        FocusManager.TryMoveFocus(FocusNavigationDirection.Next);
+        MoveFocusToNextRecordingDateLabel(video);
         StatusText.Text = "Recording date label accepted. It remains display/sort metadata only.";
+    }
+
+    private void MoveFocusToNextRecordingDateLabel(TrainingVideoItemViewModel currentVideo)
+    {
+        var videos = AllVideos().ToArray();
+        var currentIndex = Array.IndexOf(videos, currentVideo);
+        if (currentIndex < 0 || currentIndex >= videos.Length - 1)
+        {
+            return;
+        }
+
+        var nextVideo = videos[currentIndex + 1];
+        var nextList = nextVideo.Condition == TrainingCondition.VerifiedSincereTruth
+            ? TruthfulVideosList
+            : DeceptionVideosList;
+
+        nextList.ScrollIntoView(nextVideo);
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            nextList.UpdateLayout();
+            if (nextList.ContainerFromItem(nextVideo) is DependencyObject container)
+            {
+                FindRecordingDateLabelTextBox(container, nextVideo)?.Focus(FocusState.Keyboard);
+            }
+        });
+    }
+
+    private static TextBox? FindRecordingDateLabelTextBox(
+        DependencyObject root,
+        TrainingVideoItemViewModel video)
+    {
+        if (root is TextBox textBox && ReferenceEquals(textBox.DataContext, video))
+        {
+            return textBox;
+        }
+
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var match = FindRecordingDateLabelTextBox(VisualTreeHelper.GetChild(root, index), video);
+            if (match is not null)
+            {
+                return match;
+            }
+        }
+
+        return null;
     }
 
     private void CancelAddProfile_Click(object sender, RoutedEventArgs e)
@@ -1022,9 +1783,7 @@ public sealed partial class MainWindow : Window
             ResetDraftForm();
             ShowMainView();
             StatusText.Text = operationMode == EditorMode.Edit
-                ? storedProfile.Readiness == ProfileReadiness.MediaIngestedAwaitingProbe.ToString()
-                    ? "Profile changes saved. Every active media selection remains registered and awaits validation."
-                    : "Profile changes saved. New or changed active selections await media ingest."
+                ? "Profile changes saved. Media readiness was recalculated from the active selections and their persisted validation state."
                 : "Draft saved persistently. Workspace folders were created; media was not copied or processed.";
         }
         catch (Exception exception) when (
@@ -1325,7 +2084,7 @@ public sealed partial class MainWindow : Window
             : $"; {_unavailableProfileCount} catalog entry or profile database is unavailable";
         var recoveryStatus = _recoveredProcessingJobCount == 0
             ? string.Empty
-            : $"; {_recoveredProcessingJobCount} stale media-ingest job(s) marked interrupted";
+            : $"; {_recoveredProcessingJobCount} stale processing job(s) marked interrupted";
         var promotionStatus = _reconciledPromotionCount == 0
             ? string.Empty
             : $"; {_reconciledPromotionCount} interrupted media promotion(s) reconciled";
@@ -1522,10 +2281,14 @@ public sealed partial class MainWindow : Window
         var processingInThisWindow = _activeProcessingCancellation is not null;
         ProcessDataButton.IsEnabled = _profileStorageReady
             && !processingInThisWindow
-            && selected?.CanStartIngest == true;
+            && selected?.CanProcessData == true;
         CancelProcessingButton.IsEnabled = processingInThisWindow && _processingCanBeCancelled;
         RefreshProfilesButton.IsEnabled = _profileStorageReady && !processingInThisWindow;
     }
+
+    private static bool IsProcessingReadiness(string readiness) =>
+        readiness == ProfileReadiness.IngestingMedia.ToString()
+        || readiness == ProfileReadiness.ValidatingMedia.ToString();
 
     private void ShowValidation(IEnumerable<string> messages)
     {
@@ -1551,5 +2314,10 @@ public sealed partial class MainWindow : Window
         private readonly Action<T> _report = report ?? throw new ArgumentNullException(nameof(report));
 
         public void Report(T value) => _report(value);
+    }
+
+    private sealed class RegisteredMediaIntegrityException(Guid mediaAssetId) : Exception
+    {
+        public Guid MediaAssetId { get; } = mediaAssetId;
     }
 }

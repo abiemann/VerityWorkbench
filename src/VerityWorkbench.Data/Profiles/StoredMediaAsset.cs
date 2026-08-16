@@ -7,5 +7,6 @@ public sealed record StoredMediaAsset(
     string WorkspaceRelativePath,
     long ByteLength,
     MediaAssetState State,
+    string? ValidationFailure,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc);

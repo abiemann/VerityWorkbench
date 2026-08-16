@@ -2,7 +2,7 @@
 
 VerityWorkbench is a local-first Windows research workbench for investigating whether person-specific facial, vocal, timing, and linguistic changes correlate with independently supported intentional deception under controlled conditions.
 
-> Early development — Milestone 3 local media ingest. The application creates and edits persistent profiles, copies explicitly selected local MP4s into user-selected app-managed workspace assets, records their integrity metadata, and tracks cancellable ingest jobs. It does not yet validate MP4 contents with FFmpeg, extract features, train a model, or produce any behavioral score or probability.
+> Early development — Milestone 4 MP4 media validation. The application creates and edits persistent profiles, copies explicitly selected local MP4s into user-selected app-managed workspace assets, records their integrity metadata, and uses a pinned FFmpeg/ffprobe toolchain to validate an unambiguous video-and-audio stream selection with a complete CPU decode. It does not yet create proxies, extract audio or behavioral features, train a model, verify identity or authenticity, recognize language, or produce any behavioral score or probability.
 
 The authoritative scientific, product, privacy, and architecture specification is [design_doc.md](design_doc.md).
 
@@ -31,7 +31,8 @@ This repository is being implemented in small, testable slices.
 - [x] Unit tests for domain, workspace, and persistence rules
 - [x] Local MP4 staging, SHA-256 hashing, app-managed workspace promotion, and content deduplication
 - [x] Persistent ingest jobs with live progress, cancellation, stale-job recovery, and cross-condition content conflict detection
-- [ ] FFmpeg/ffprobe MP4 validation, stream-quality inspection, proxies, and audio extraction
+- [x] Version- and hash-pinned FFmpeg/ffprobe MP4 probing, normalized metadata persistence, and complete selected-stream CPU decode validation
+- [ ] Media-quality thresholds, timestamp mapping, playback proxies, and audio extraction
 - [ ] Direct-URL resumable downloads
 - [ ] Processing-folder inspection and verified cleanup controls
 - [ ] Playback, transcription, and feature extraction
@@ -42,15 +43,22 @@ This repository is being implemented in small, testable slices.
 - [ ] Query Profile workflow
 - [ ] One-file encrypted `.vwpkg` import/export
 
-**Query Profile** remains deliberately unavailable. Edit Profile updates profile metadata and media eligibility but does not relocate workspaces, delete ingested assets, run FFmpeg, import packages, or export models. No placeholder or random scoring code exists.
+**Query Profile** remains deliberately unavailable. Edit Profile updates profile metadata and media eligibility but does not relocate workspaces, delete ingested assets, import packages, or export models. Media validation establishes only that the selected MP4 streams satisfy this engineering contract and decode completely; it does not establish subject identity, media authenticity, spoken language, label correctness, or suitability for model training. No placeholder or random scoring code exists.
 
 ## What to install
 
 ### To test this slice on the current development computer
 
-Nothing else is required for the PowerShell workflow below. This computer has .NET SDK `10.0.400`, and the application has been restored, built, tested, and launch-checked successfully.
+This computer has .NET SDK `10.0.400` and the separately installed media tools below:
 
-Python, FFmpeg, GPU drivers/toolkits, Whisper, and model files are **not needed** for this milestone. Do not install them yet. FFmpeg will first be required for the next media-probe and MP4-validation slice; exact pinned-build instructions will be added before that work begins.
+```text
+D:\Tools\VerityWorkbench\FFmpeg\8.1\bin\ffmpeg.exe
+D:\Tools\VerityWorkbench\FFmpeg\8.1\bin\ffprobe.exe
+```
+
+The required build is BtbN FFmpeg-Builds `win64-lgpl-8.1`, build identity `n8.1.2-44-g7c533d0f86-20260815`, from release tag `autobuild-2026-08-15-13-02`. It reports `LGPL version 3 or later`; GPL and nonfree variants are not accepted by this validation contract.
+
+Python, GPU drivers/toolkits, Whisper, and model files are **not needed** for this milestone. Validation deliberately uses the CPU/software decode path.
 
 ### On another Windows development computer
 
@@ -59,6 +67,7 @@ Install:
 1. Windows 10 version 1809 (build 17763) or later. The current project is tested as an x64 application.
 2. [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0). Install the SDK, not only the runtime.
 3. The x64 Windows App Runtime matching Windows App SDK `2.4.0`, if it is not already present. The current downloads are on Microsoft's [Windows App SDK downloads page](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads).
+4. The exact external FFmpeg/ffprobe build described in [Install and verify FFmpeg](#install-and-verify-ffmpeg). Do not substitute another build merely because it reports FFmpeg 8.1.
 
 For Visual Studio development, use **Visual Studio Community 2026** and install its WinUI workload:
 
@@ -77,6 +86,38 @@ The optional Microsoft CLI template pack is also not required to build this repo
 ```powershell
 dotnet new install Microsoft.WindowsAppSDK.WinUI.CSharp.Templates
 ```
+
+### Install and verify FFmpeg
+
+FFmpeg is a separate local tool dependency and is not committed to this repository or bundled into the application. Download the `win64-lgpl-8.1` archive from the BtbN FFmpeg-Builds release tagged [`autobuild-2026-08-15-13-02`](https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-08-15-13-02), then extract it so the two executables are directly below a `bin` folder. The current development root is:
+
+```text
+D:\Tools\VerityWorkbench\FFmpeg\8.1
+```
+
+Verify the build identity and file hashes in PowerShell:
+
+```powershell
+$verityFfmpegRoot = 'D:\Tools\VerityWorkbench\FFmpeg\8.1'
+& "$verityFfmpegRoot\bin\ffmpeg.exe" -version | Select-Object -First 1
+& "$verityFfmpegRoot\bin\ffprobe.exe" -version | Select-Object -First 1
+(Get-FileHash -LiteralPath "$verityFfmpegRoot\bin\ffmpeg.exe" -Algorithm SHA256).Hash
+(Get-FileHash -LiteralPath "$verityFfmpegRoot\bin\ffprobe.exe" -Algorithm SHA256).Hash
+```
+
+The first two lines must identify `n8.1.2-44-g7c533d0f86-20260815`. The expected hashes are:
+
+```text
+ffmpeg.exe  FE6FAEE813EF5B4407F10DB5C8F0CC50CEE0B0A1A981F0B903567E2EBB7B92DF
+ffprobe.exe AAA354B9841D92B4FA5F60EAF58169055B5D9D3D0420AC553784523DFE312724
+```
+
+The app does not search `PATH`. Configure the directory containing `bin` in either of these ways:
+
+- Copy `src\VerityWorkbench.App\appsettings.Local.example.json` to `src\VerityWorkbench.App\appsettings.Local.json`, edit `mediaTools.ffmpegRoot` if needed, and rebuild. `appsettings.Local.json` is intentionally ignored by Git.
+- Before launching the app from a terminal, set `$env:VERITYWORKBENCH_FFMPEG_ROOT` to the absolute root. This environment variable takes precedence over the local settings file.
+
+The tracked [`media-tools.manifest.json`](src/VerityWorkbench.App/media-tools.manifest.json) is the authoritative validation pin: it records the distribution, release tag, variant, exact build identity, declared `LGPL-3.0-or-later` license, executable names, executable SHA-256 hashes, and validation-contract version. At runtime the app independently hashes both executables and checks their reported identity before starting a validation job. A missing, modified, or different build is rejected before profile processing state changes. The manifest records provenance for reproducibility; it does not replace the FFmpeg license notices or any redistribution obligations.
 
 ## Build, test, and run
 
@@ -118,7 +159,7 @@ Run the Windows application after the build succeeds:
 dotnet run --project .\src\VerityWorkbench.App\VerityWorkbench.App.csproj --configuration Debug --no-build --no-restore -p:Platform=x64
 ```
 
-Verified baseline at the time of this README update: the solution builds with zero warnings and zero errors; all 67 tests pass (12 core, 44 persistence, and 11 media-safety tests).
+The checked-in solution is expected to build with zero warnings and zero errors and to pass all tests. Use the current command output as the authoritative test count because the suite grows with each implementation slice.
 
 ## Use the current application
 
@@ -128,7 +169,7 @@ Verified baseline at the time of this README update: the solution builds with ze
 4. Select a dedicated profile workspace folder. A drive root such as `D:\` is rejected.
 5. Optionally select a separate download-staging folder. Leave it blank to use `Downloads` inside the workspace.
 6. Add one or more explicitly selected local `.mp4` files to the appropriate training list.
-7. Enter any recording-date text you want displayed with each video, then press **Enter** to accept it. This is an opaque display/sort label; it is not parsed as a date and is never a model feature, label, identity, or verified capture time.
+7. Enter any recording-date text you want displayed with each video, then press **Enter** to accept it and move to the next recording-label field when one is available. This is an opaque display/sort label; it is not parsed as a date and is never a model feature, label, identity, or verified capture time.
 8. Remove items or sort either list by the recording label as needed.
 9. Select **Save draft**.
 
@@ -144,7 +185,7 @@ Selecting **Cancel** before saving clears the form and creates no profile or wor
 4. Every row has **Remove**. A previously saved row also has **Archive** or **Unarchive**. Archiving here changes only local selection metadata; it does not move or delete the source MP4. Removing an unprocessed selection removes its current path/label row but never deletes the source MP4. SQLite secure deletion is enabled, but this is not a promise to purge external backups, filesystem snapshots, or storage-device history.
 5. Select **Save changes** to commit the update atomically, or **Cancel** to discard the detached working copy.
 
-Workspace and download roots are read-only during Edit in this milestone. Safe relocation behavior is still unresolved and will not be simulated by merely changing a stored path. Editing starts no background work. A profile remains **Media registered — awaiting validation** only when every active selection is already linked to an ingested asset; otherwise it returns to **Draft — not processed** until the new active selections are ingested.
+Workspace and download roots are read-only during Edit in this milestone. Safe relocation behavior is still unresolved and will not be simulated by merely changing a stored path. Editing starts no background work. Readiness is recalculated from the active selections and their immutable media state: adding or unarchiving an unprocessed selection returns the profile to **Draft — not processed**; a metadata-only edit preserves completed validation; archiving a failed item can make the remaining active set eligible again.
 
 If another app window saves the same profile after you opened it, your stale edit is refused and the list is refreshed; the later click does not silently overwrite the earlier save.
 
@@ -154,15 +195,28 @@ If another app window saves the same profile after you opened it, your stale edi
 2. Select **Process Data**.
 3. VerityWorkbench copies each active, not-yet-ingested local MP4 into one bounded `Processing` job while computing SHA-256. The source file is opened read-only and is never modified.
 4. Complete copies are atomically promoted beneath the profile's `Media` folder. The profile then shows **Media registered — awaiting validation**.
-5. Selecting **Process Data** again on a fully registered profile rechecks every active workspace copy's byte length and SHA-256. This is an explicit integrity check, not MP4 stream validation.
+5. This first **Process Data** pass stops after ingest. Select **Process Data** again to begin the separate validation stage described below.
 
 Select **Cancel Processing** to request cooperative cancellation. The active stream is closed, no partial file is promoted, the source remains unchanged, and the unique processing-job folder is retained for inspection. If the app exits unexpectedly, a job with no heartbeat for ten minutes is marked interrupted the next time that profile is loaded; select **Refresh** after that grace period if the app is already open. A fresh job from another app window is not interrupted.
 
 Before moving a complete staged copy into `Media`, the app writes a small promotion journal containing only stable IDs, hashes, byte lengths, and workspace-relative paths. It contains no original source path. On restart or Refresh, terminal and stale jobs use this journal to finish a committed move or return an uncommitted folder to its processing job without deleting the media bytes.
 
-Content identity is the SHA-256 hash, not a path or filename. Identical content in the same training condition reuses one app-managed asset. The app verifies a stored asset's length and SHA-256 before reusing it and whenever **Process Data** is selected for a registered profile, but it cannot prevent another process or the user from changing workspace files. A missing or changed copy is reported as **Workspace media needs repair**; this milestone changes neither the damaged copy nor its metadata because a journaled, no-deletion repair workflow is not implemented yet. Keep the original source MP4. Identical bytes assigned to both sincere-truth and intentional-deception conditions are rejected for manual label resolution.
+Content identity is the SHA-256 hash, not a path or filename. Identical content in the same training condition reuses one app-managed asset. The app verifies a stored asset's length and SHA-256 before reusing it and whenever **Process Data** is selected for a registered profile, but it cannot prevent another process or the user from changing workspace files. A missing or changed copy is persistently marked **Workspace media changed — repair required**, which blocks further processing after a restart while preserving the prior immutable validation record for audit. This milestone does not alter, delete, or replace the damaged copy. Archiving every training selection linked to it only excludes that asset so the remaining active set can proceed; it does not repair the asset, and adding the same media again is not a replacement workflow. Retain the original source until a journaled repair workflow is implemented. Identical bytes assigned to both sincere-truth and intentional-deception conditions are rejected for manual label resolution.
 
-This milestone checks file integrity and the `.mp4` extension only. **Media registered** does not mean the container or streams have been validated. Do not delete the original source until a later FFmpeg-enabled release reports that the workspace copy passed media validation.
+**Media registered** means only that the app-managed bytes passed the ingest integrity checks. It does not mean the container or streams have been validated. Keep the original source at least until the second processing stage reports **Media validated — awaiting feature extraction**.
+
+### Validate registered MP4 media
+
+1. Select a profile showing **Media registered — awaiting validation** or **Media validation needs attention**.
+2. Select **Process Data**. Before creating a job, VerityWorkbench loads the local media-tool configuration, hashes both executables, and verifies the exact pinned FFmpeg/ffprobe identity. Dependency failure leaves the profile in its previous safe state.
+3. The app rechecks each active workspace copy's expected byte length and SHA-256, then invokes `ffprobe` directly without a shell. The MP4 must have a supported MP4 container and an unambiguous usable stream choice.
+4. Validation requires exactly one selected usable video stream and one selected usable audio stream. Missing, invalid, or ambiguous choices fail safely. Metadata such as codec, dimensions, duration, frame-rate rational, sample rate, channel count, stream indices, and tool provenance is normalized before persistence; raw probe JSON, raw tool errors, executable paths, and original source paths are not stored as validation results.
+5. The selected streams are completely decoded to a null output by the pinned `ffmpeg` executable with hardware acceleration disabled. This is a CPU/software integrity pass over the full selected audio and video streams, not a sample-only header check. The app creates no proxy, extracted audio, frames, thumbnails, transcript, or other media derivative.
+6. The app rechecks the media length and SHA-256 after decoding. Only a stable file that passes the entire contract is marked **Media validated — awaiting feature extraction**. A content rejection is recorded as a bounded, sanitized failure and the profile shows **Media validation needs attention**. A missing or changed registered copy is instead persisted as **Workspace media changed — repair required** and cannot be revalidated until it is repaired or excluded from the active training set.
+
+External processes have fixed time and output limits. Select **Cancel Processing** to stop the active validation: the app terminates the child process tree, waits for exit, closes process and media handles, and restores a safe derived profile state without writing a success result. A later **Process Data** attempt can retry failed or interrupted validation; an already successful immutable result is not silently replaced.
+
+This engineering gate says only that the registered MP4, selected stream metadata, and complete CPU decode passed the pinned contract. It does **not** assess recording quality for modeling, confirm the profile subject, associate face and speaker, detect synthetic or manipulated media, recognize or compare spoken language, validate the user's training label, extract features, or produce a score, probability, or statement about truth.
 
 ## Persistent local metadata
 
@@ -172,7 +226,7 @@ Each profile's authoritative metadata database is stored inside its selected wor
 <profile-workspace>\Profile\profile.sqlite
 ```
 
-That SQLite database contains stable pseudonymous IDs, display names, normalized workspace/download roots, full local source-file paths, recording labels, training buckets, archive/order metadata, media hashes and workspace-relative asset paths, ingest-job status/progress, readiness, and timestamps. It contains no video bytes, frames, extracted audio, transcripts, model features, or scores.
+That SQLite database contains stable pseudonymous IDs, display names, normalized workspace/download roots, full local source-file paths, recording labels, training buckets, archive/order metadata, media hashes and workspace-relative asset paths, ingest/validation job status and progress, normalized successful validation metadata and tool provenance, bounded sanitized validation or integrity-failure states, readiness, and timestamps. It contains no video bytes, raw probe JSON, raw FFmpeg output, frames, extracted audio, transcripts, model features, or scores.
 
 To find those user-selected workspaces after restart, the app keeps a minimal per-Windows-user locator catalog at:
 
@@ -224,7 +278,7 @@ A complete Add Profile workflow will accept curated training videos, an imported
 
 ### Edit Profile
 
-Edit Profile handles persistent metadata, additions, and archive/unarchive eligibility. Ingested selections cannot be removed as though they were still unprocessed; archive them to exclude them from future work. Future slices will add FFmpeg validation, reprocessing, verified deletion and root relocation, compatible package import, and eligible-model export. Any future training change will require a new processing/model version rather than silently mutating an accepted model.
+Edit Profile handles persistent metadata, additions, and archive/unarchive eligibility. Ingested selections cannot be removed as though they were still unprocessed; archive them to exclude them from future work. Future slices will add feature extraction/reprocessing, verified deletion and root relocation, compatible package import, and eligible-model export. Any future training change will require a new processing/model version rather than silently mutating an accepted model.
 
 ### Query Profile
 
@@ -249,7 +303,7 @@ For an eligible query, the initial analog display will be an uncalibrated direct
 - Processing is local. No account, hosted analysis service, or telemetry is required.
 - Source files are never modified.
 - Users are responsible for rights, consent, retention, label provenance, and authorized sharing.
-- A cancellation request stops the active local-ingest operation, closes its file handles, promotes no partial artifact, and leaves the unique processing folder available for inspection or later deletion. Future multi-process workers must preserve this same boundary.
+- A cancellation request stops the active ingest or media-validation operation, terminates any active FFmpeg/ffprobe process tree, closes file/process handles, writes no false success, promotes no partial artifact, and leaves the unique processing folder available for inspection or later deletion. Future workers must preserve this same boundary.
 
 Every future export will produce exactly one encrypted `.vwpkg` file. Two planned types are:
 
@@ -266,7 +320,7 @@ VerityWorkbench/
     VerityWorkbench.App/       WinUI shell and Add/Edit Profile UI
     VerityWorkbench.Core/      Profile validation and workspace rules
     VerityWorkbench.Data/      Local SQLite profile persistence
-    VerityWorkbench.Media/     Bounded local staging, hashing, and atomic promotion
+    VerityWorkbench.Media/     Bounded staging, hashing, promotion, probing, and full-decode validation
   tests/
     VerityWorkbench.Core.Tests/
     VerityWorkbench.Data.Tests/
@@ -286,11 +340,12 @@ Additional Jobs, Inference, and Packaging projects will be added only when a tes
 | Windows App SDK | 2.4.0 | WinUI 3 desktop application |
 | Microsoft.Data.Sqlite | 10.0.10 | Persistent local profile metadata |
 | SQLitePCLRaw.lib.e_sqlite3 | 2.1.12 | SQLite native runtime |
+| BtbN FFmpeg/ffprobe | n8.1.2-44-g7c533d0f86-20260815 (`win64-lgpl-8.1`) | MP4 probing and selected-stream CPU decode validation |
 | xUnit | 2.9.3 | Core unit tests |
 | xUnit Visual Studio runner | 3.1.4 | Test discovery and execution |
 | Microsoft.NET.Test.Sdk | 17.14.1 | .NET test host |
 
-No third-party media, ML, or packaging dependency has been added yet. Local staging and hashing use the .NET runtime.
+FFmpeg/ffprobe is invoked as a separately installed, pinned external LGPL toolchain; it is not copied into this repository. No third-party ML or packaging dependency has been added yet. Local staging and hashing use the .NET runtime.
 
 ## Project status and license
 

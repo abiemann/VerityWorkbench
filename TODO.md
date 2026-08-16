@@ -1,5 +1,23 @@
 # VerityWorkbench TODO
 
+## Milestone 4 MP4 media validation
+
+- [x] Pin the external BtbN `win64-lgpl-8.1` FFmpeg/ffprobe build `n8.1.2-44-g7c533d0f86-20260815`, its release provenance, declared license, executable names, SHA-256 hashes, and validation-contract version in a tracked manifest; keep the absolute local installation root out of Git.
+- [x] Load the FFmpeg root from `VERITYWORKBENCH_FFMPEG_ROOT` or an ignored `appsettings.Local.json`; use explicit executable paths and never search `PATH` or invoke a shell.
+- [x] Verify both executable hashes and reported build identities before starting a validation job, with bounded execution time and standard-output/error capture.
+- [x] Recheck each registered media asset's expected byte length and SHA-256 immediately before and after validation.
+- [x] Probe MP4 structure into bounded JSON, require an unambiguous usable video-stream selection and audio-stream selection, and normalize only the required container, timing, codec, video, and audio fields.
+- [x] Completely decode exactly one selected video stream and one selected audio stream to null output on the CPU/software path; create no media derivative.
+- [x] Persist immutable successful normalized validation results and tool provenance without executable paths, original media paths, raw probe JSON, or raw FFmpeg/ffprobe errors; retain only bounded sanitized failure categories/messages.
+- [x] Track validation as a separate persistent processing job with snapshotted asset membership, heartbeat/progress, retryable content failures, safe stale-job recovery, and readiness derived from active media state.
+- [x] On cancellation or operational failure, terminate the external process tree, close handles, write no successful result, and restore the profile's safe derived pre-job readiness.
+- [x] Persist a registered-media integrity-failure state that survives restart, blocks further processing, preserves immutable validation provenance, and can be excluded by archiving the affected training selection.
+- [ ] Add a journaled, no-deletion repair workflow that can replace a changed or missing registered media copy from an explicitly selected source.
+- [ ] Add declared media-quality and applicability thresholds for later feature extraction; passing decode alone is not model readiness.
+- [ ] Add canonical proxy creation, extracted audio, timestamp mapping, derivative hashing, and their cancellation/recovery journals.
+- [ ] Add inspection and verified cleanup controls for retained processing-job folders and future media derivatives.
+- [ ] Add automated integration fixtures for additional supported codecs, corrupt/truncated MP4s, ambiguous/default stream combinations, cancellation during long decode, timeout/output-limit enforcement, and post-decode mutation detection.
+
 ## Multilingual transcription and model-language gate
 
 - [ ] Select and license a local multilingual ASR model/runtime; do not use an English-only model for the product path.

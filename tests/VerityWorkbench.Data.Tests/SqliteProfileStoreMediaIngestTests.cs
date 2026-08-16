@@ -10,7 +10,7 @@ public sealed class SqliteProfileStoreMediaIngestTests
         new(2026, 8, 15, 18, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task VersionTwoDatabaseMigratesToVersionThreeWithoutLosingProfiles()
+    public async Task VersionTwoDatabaseMigratesToCurrentVersionWithoutLosingProfiles()
     {
         using var database = new TestDatabase();
         var profileId = Guid.NewGuid();
@@ -20,7 +20,7 @@ public sealed class SqliteProfileStoreMediaIngestTests
         var restartedStore = new SqliteProfileStore(database.DatabasePath, createIfMissing: false);
         await restartedStore.InitializeAsync();
 
-        Assert.Equal(3L, await ReadSchemaVersionAsync(database.DatabasePath));
+        Assert.Equal(4L, await ReadSchemaVersionAsync(database.DatabasePath));
         Assert.True(await TableHasColumnAsync(database.DatabasePath, "training_videos", "media_asset_id"));
         Assert.True(await TableExistsAsync(database.DatabasePath, "media_assets"));
         Assert.True(await TableExistsAsync(database.DatabasePath, "processing_jobs"));
