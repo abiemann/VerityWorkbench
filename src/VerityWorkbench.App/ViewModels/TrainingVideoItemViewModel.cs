@@ -10,7 +10,14 @@ public sealed class TrainingVideoItemViewModel : INotifyPropertyChanged
     private bool _isArchived;
 
     public TrainingVideoItemViewModel(string fullPath, TrainingCondition condition)
-        : this(Guid.NewGuid(), fullPath, condition, string.Empty, isArchived: false, isPersisted: false)
+        : this(
+            Guid.NewGuid(),
+            fullPath,
+            condition,
+            string.Empty,
+            isArchived: false,
+            isPersisted: false,
+            mediaAssetId: null)
     {
     }
 
@@ -20,7 +27,8 @@ public sealed class TrainingVideoItemViewModel : INotifyPropertyChanged
         TrainingCondition condition,
         string recordingDateLabel,
         bool isArchived,
-        bool isPersisted)
+        bool isPersisted,
+        Guid? mediaAssetId)
     {
         Id = id;
         FullPath = Path.GetFullPath(fullPath);
@@ -29,6 +37,7 @@ public sealed class TrainingVideoItemViewModel : INotifyPropertyChanged
         _recordingDateLabel = recordingDateLabel;
         _isArchived = isArchived;
         IsPersisted = isPersisted;
+        MediaAssetId = mediaAssetId;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -42,6 +51,10 @@ public sealed class TrainingVideoItemViewModel : INotifyPropertyChanged
     public TrainingCondition Condition { get; }
 
     public bool IsPersisted { get; }
+
+    public Guid? MediaAssetId { get; }
+
+    public bool CanRemove => MediaAssetId is null;
 
     public string RecordingDateLabel
     {

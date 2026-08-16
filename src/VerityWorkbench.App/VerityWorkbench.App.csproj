@@ -19,5 +19,6 @@
   <ItemGroup>
     <ProjectReference Include="..\VerityWorkbench.Core\VerityWorkbench.Core.csproj" />
     <ProjectReference Include="..\VerityWorkbench.Data\VerityWorkbench.Data.csproj" />
+    <ProjectReference Include="..\VerityWorkbench.Media\VerityWorkbench.Media.csproj" />
   </ItemGroup>
 </Project>

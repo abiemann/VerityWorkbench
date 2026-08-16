@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Data.Common;
+using System.Globalization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -7,6 +8,7 @@ using VerityWorkbench.App.ViewModels;
 using VerityWorkbench.Core.Profiles;
 using VerityWorkbench.Core.Workspaces;
 using VerityWorkbench.Data.Profiles;
+using VerityWorkbench.Media;
 using Windows.System;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
@@ -16,13 +18,22 @@ namespace VerityWorkbench.App;
 public sealed partial class MainWindow : Window
 {
     private static readonly TimeSpan PendingLocatorRecoveryAge = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan ProcessingJobRecoveryAge = TimeSpan.FromMinutes(10);
 
     private readonly ObservableCollection<ProfileSummaryViewModel> _profiles = [];
     private readonly ObservableCollection<TrainingVideoItemViewModel> _truthfulVideos = [];
     private readonly ObservableCollection<TrainingVideoItemViewModel> _deceptionVideos = [];
+    private readonly LocalMediaStagingService _localMediaStagingService = new();
     private readonly SqliteProfileCatalog _profileCatalog;
     private EditorMode _editorMode;
     private StoredProfile? _editingProfile;
+    private CancellationTokenSource? _activeProcessingCancellation;
+    private Guid? _activeProcessingProfileId;
+    private bool _processingCanBeCancelled;
+    private bool _profileStorageReady;
+    private int _recoveredProcessingJobCount;
+    private int _reconciledPromotionCount;
+    private int _promotionRecoveryWarningCount;
     private int _unavailableProfileCount;
 
     public MainWindow()
@@ -57,6 +68,12 @@ public sealed partial class MainWindow : Window
         if (ProfilesList.SelectedItem is not ProfileSummaryViewModel selected)
         {
             StatusText.Text = "Select a saved profile before choosing Edit Profile.";
+            return;
+        }
+
+        if (selected.Readiness == ProfileReadiness.IngestingMedia.ToString())
+        {
+            StatusText.Text = "This profile has an active media-ingest job and cannot be edited yet.";
             return;
         }
 
@@ -105,6 +122,692 @@ public sealed partial class MainWindow : Window
     private void QueryProfile_Click(object sender, RoutedEventArgs e) =>
         StatusText.Text = "Query Profile remains disabled by design until real processing and validation exist.";
 
+    private void ProfilesList_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        UpdateProfileActionButtons();
+
+    private async void RefreshProfiles_Click(object sender, RoutedEventArgs e)
+    {
+        if (_activeProcessingCancellation is not null)
+        {
+            StatusText.Text = "Wait for the active media-ingest job to finish or cancel it before refreshing.";
+            return;
+        }
+
+        var selectedId = (ProfilesList.SelectedItem as ProfileSummaryViewModel)?.Id;
+        RefreshProfilesButton.IsEnabled = false;
+        AddProfileButton.IsEnabled = false;
+        EditProfileButton.IsEnabled = false;
+        ProcessDataButton.IsEnabled = false;
+        StatusText.Text = "Refreshing profiles and reconciling stale ingest jobs…";
+        try
+        {
+            await ReloadProfilesAsync(selectedId);
+            StatusText.Text = BuildLoadedProfilesStatus();
+            if (_profiles.Any(profile => profile.Readiness == ProfileReadiness.IngestingMedia.ToString()))
+            {
+                StatusText.Text += " A fresh job may still be active in another app window; a job with no heartbeat for ten minutes is recovered on Refresh.";
+            }
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or IOException
+                or UnauthorizedAccessException
+                or InvalidOperationException
+                or DbException
+                or FormatException)
+        {
+            StatusText.Text = "Profiles could not be refreshed: " + exception.Message;
+        }
+        finally
+        {
+            AddProfileButton.IsEnabled = _profileStorageReady;
+            EditProfileButton.IsEnabled = _profileStorageReady;
+            UpdateProfileActionButtons();
+        }
+    }
+
+    private void CancelProcessing_Click(object sender, RoutedEventArgs e)
+    {
+        if (_activeProcessingCancellation is null)
+        {
+            StatusText.Text = "No media-ingest job is running in this app window.";
+            return;
+        }
+
+        if (!_processingCanBeCancelled)
+        {
+            StatusText.Text = "Media registration is already committed and the workspace state is being finalized.";
+            return;
+        }
+
+        CancelProcessingButton.IsEnabled = false;
+        StatusText.Text = "Cancelling media ingest and closing open files…";
+        _activeProcessingCancellation.Cancel();
+    }
+
+    private void MainWindow_Closed(object sender, WindowEventArgs args)
+    {
+        if (_processingCanBeCancelled)
+        {
+            _activeProcessingCancellation?.Cancel();
+        }
+    }
+
+    private async void ProcessData_Click(object sender, RoutedEventArgs e)
+    {
+        if (_activeProcessingCancellation is not null)
+        {
+            StatusText.Text = "A media-ingest job is already running in this app window.";
+            return;
+        }
+
+        if (ProfilesList.SelectedItem is not ProfileSummaryViewModel selected)
+        {
+            StatusText.Text = "Select a saved profile before choosing Process Data.";
+            return;
+        }
+
+        SqliteProfileStore? profileStore = null;
+        ProfileWorkspaceLayout? layout = null;
+        Guid jobId = Guid.Empty;
+        var jobStarted = false;
+        var databaseCompletionCommitted = false;
+        var mediaIntegrityFailure = false;
+        var promotedAssets = new List<PromotedLocalMediaAsset>();
+        CancellationTokenSource? heartbeatStop = null;
+        Task<Exception?>? heartbeatTask = null;
+        Exception? heartbeatFailure = null;
+        var heartbeatAwaited = false;
+
+        async Task<Exception?> StopHeartbeatAsync()
+        {
+            if (heartbeatAwaited)
+            {
+                return heartbeatFailure;
+            }
+
+            heartbeatAwaited = true;
+            if (heartbeatStop is null || heartbeatTask is null)
+            {
+                return null;
+            }
+
+            heartbeatStop.Cancel();
+            heartbeatFailure = await heartbeatTask;
+            return heartbeatFailure;
+        }
+
+        var processingCancellation = new CancellationTokenSource();
+        _activeProcessingCancellation = processingCancellation;
+        _activeProcessingProfileId = selected.Id;
+        _processingCanBeCancelled = true;
+        SetProcessingUiState(isProcessing: true);
+        selected.SetLiveStatus("Preparing local media ingest…");
+        StatusText.Text = "Checking the selected profile and local MP4 sources…";
+
+        try
+        {
+            profileStore = CreateProfileStore(selected.WorkspaceRoot);
+            var profile = await profileStore.GetByIdAsync(selected.Id, processingCancellation.Token)
+                ?? throw new KeyNotFoundException("The selected profile no longer exists.");
+            if (profile.Readiness == ProfileReadiness.IngestingMedia.ToString())
+            {
+                throw new ProfileProcessingActiveException(profile.Id);
+            }
+
+            layout = ProfileWorkspaceLayout.Create(profile.WorkspaceRoot, profile.DownloadStagingRoot);
+            var linkedAssetIds = profile.TrainingVideos
+                .Where(video => !video.IsArchived && video.MediaAssetId is not null)
+                .Select(video => video.MediaAssetId!.Value)
+                .Distinct()
+                .ToArray();
+            if (linkedAssetIds.Length > 0)
+            {
+                selected.SetLiveStatus("Verifying registered workspace media…");
+                StatusText.Text = "Verifying the length and SHA-256 of registered workspace media…";
+                var registeredAssets = (await profileStore.GetMediaAssetsAsync(
+                        profile.Id,
+                        processingCancellation.Token))
+                    .ToDictionary(asset => asset.Id);
+                foreach (var linkedAssetId in linkedAssetIds)
+                {
+                    processingCancellation.Token.ThrowIfCancellationRequested();
+                    if (!registeredAssets.TryGetValue(linkedAssetId, out var registeredAsset))
+                    {
+                        mediaIntegrityFailure = true;
+                        throw new InvalidDataException(
+                            "A training selection references media metadata that is no longer available.");
+                    }
+
+                    try
+                    {
+                        await _localMediaStagingService.VerifyExistingAssetAsync(
+                            layout,
+                            registeredAsset.Id,
+                            registeredAsset.WorkspaceRelativePath,
+                            registeredAsset.Sha256,
+                            registeredAsset.ByteLength,
+                            processingCancellation.Token);
+                    }
+                    catch (Exception exception) when (
+                        exception is FileNotFoundException or InvalidDataException)
+                    {
+                        mediaIntegrityFailure = true;
+                        throw new InvalidDataException(
+                            "A registered workspace media copy is missing or no longer matches its recorded integrity metadata. "
+                            + "The app left all files and metadata unchanged; automatic repair is not implemented yet.",
+                            exception);
+                    }
+                }
+            }
+
+            var pendingVideos = profile.TrainingVideos
+                .Where(video => !video.IsArchived && video.MediaAssetId is null)
+                .OrderBy(video => video.SortOrder)
+                .ToArray();
+            if (pendingVideos.Length == 0)
+            {
+                selected.SetLiveStatus(null);
+                StatusText.Text = "All active workspace copies passed length and SHA-256 verification. FFmpeg validation is the next implementation slice.";
+                return;
+            }
+
+            var byteLengths = new Dictionary<Guid, long>();
+            long totalBytes = 0;
+            foreach (var video in pendingVideos)
+            {
+                processingCancellation.Token.ThrowIfCancellationRequested();
+                if (!File.Exists(video.FilePath))
+                {
+                    throw new FileNotFoundException(
+                        $"A selected source MP4 is missing: {video.FilePath}",
+                        video.FilePath);
+                }
+
+                var length = new FileInfo(video.FilePath).Length;
+                if (length <= 0)
+                {
+                    throw new InvalidDataException(
+                        $"A selected source MP4 is empty: {video.FilePath}");
+                }
+
+                byteLengths.Add(video.Id, length);
+                totalBytes = checked(totalBytes + length);
+            }
+
+            jobId = Guid.NewGuid();
+            var startedAtUtc = DateTimeOffset.UtcNow;
+            if (startedAtUtc <= profile.UpdatedAtUtc)
+            {
+                startedAtUtc = profile.UpdatedAtUtc.AddTicks(1);
+            }
+
+            var relativeJobPath = LocalMediaStagingService.BuildJobRelativePath(jobId, startedAtUtc);
+            await profileStore.StartLocalMediaIngestJobAsync(
+                profile.Id,
+                profile.UpdatedAtUtc,
+                jobId,
+                relativeJobPath,
+                pendingVideos.Length,
+                totalBytes,
+                startedAtUtc,
+                processingCancellation.Token);
+            jobStarted = true;
+
+            if (!await profileStore.UpdateProcessingJobProgressAsync(
+                    jobId,
+                    ProcessingJobState.Running,
+                    0,
+                    0,
+                    DateTimeOffset.UtcNow,
+                    processingCancellation.Token))
+            {
+                throw new InvalidOperationException("The media-ingest job stopped before file copying began.");
+            }
+
+            long latestCompletedBytes = 0;
+            var latestCompletedItems = 0;
+            var stagingCompleted = 0;
+            var prefixBytes = new Dictionary<Guid, long>();
+            long prefix = 0;
+            foreach (var video in pendingVideos)
+            {
+                prefixBytes.Add(video.Id, prefix);
+                prefix = checked(prefix + byteLengths[video.Id]);
+            }
+
+            var progress = new InlineProgress<LocalMediaStagingProgress>(update =>
+            {
+                var aggregateBytes = checked(prefixBytes[update.TrainingVideoId] + update.BytesCopied);
+                var aggregateItems = update.ItemNumber - 1;
+                Interlocked.Exchange(ref latestCompletedBytes, aggregateBytes);
+                Interlocked.Exchange(ref latestCompletedItems, aggregateItems);
+
+                var percentage = totalBytes == 0
+                    ? 0
+                    : Math.Clamp(aggregateBytes * 100d / totalBytes, 0d, 100d);
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (_activeProcessingProfileId != selected.Id
+                        || Volatile.Read(ref stagingCompleted) != 0)
+                    {
+                        return;
+                    }
+
+                    var liveStatus = string.Create(
+                        CultureInfo.CurrentCulture,
+                        $"Copying media {percentage:0}% · {aggregateItems}/{pendingVideos.Length} complete");
+                    selected.SetLiveStatus(liveStatus);
+                    StatusText.Text = liveStatus + ". Source files remain unchanged.";
+                });
+            });
+
+            heartbeatStop = new CancellationTokenSource();
+            heartbeatTask = RunProcessingHeartbeatAsync(
+                profileStore,
+                jobId,
+                () => (
+                    Volatile.Read(ref latestCompletedItems),
+                    Volatile.Read(ref latestCompletedBytes)),
+                processingCancellation,
+                heartbeatStop.Token);
+
+            var stagingResult = await _localMediaStagingService.StageAsync(
+                layout,
+                jobId,
+                startedAtUtc,
+                pendingVideos
+                    .Select(video => new LocalMediaStageRequest(video.Id, video.FilePath))
+                    .ToArray(),
+                progress,
+                processingCancellation.Token);
+            processingCancellation.Token.ThrowIfCancellationRequested();
+            Interlocked.Exchange(ref latestCompletedBytes, totalBytes);
+            Interlocked.Exchange(ref latestCompletedItems, pendingVideos.Length);
+            Interlocked.Exchange(ref stagingCompleted, 1);
+            selected.SetLiveStatus($"Finalizing media · {pendingVideos.Length}/{pendingVideos.Length} copied");
+            StatusText.Text = "All selected files were copied and verified. Finalizing workspace assets…";
+
+            var pendingById = pendingVideos.ToDictionary(video => video.Id);
+            var existingAssets = await profileStore.GetMediaAssetsAsync(
+                profile.Id,
+                processingCancellation.Token);
+            var existingAssetsByHash = existingAssets.ToDictionary(
+                asset => asset.Sha256,
+                StringComparer.Ordinal);
+            var existingConditionsByAsset = profile.TrainingVideos
+                .Where(video => video.MediaAssetId is not null)
+                .GroupBy(video => video.MediaAssetId!.Value)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Select(video => video.Condition).Distinct().ToArray());
+
+            var registrations = new List<MediaAssetRegistration>(stagingResult.Items.Count);
+            foreach (var hashGroup in stagingResult.Items.GroupBy(item => item.Sha256, StringComparer.Ordinal))
+            {
+                processingCancellation.Token.ThrowIfCancellationRequested();
+                var groupItems = hashGroup.ToArray();
+                var conditions = groupItems
+                    .Select(item => pendingById[item.TrainingVideoId].Condition)
+                    .Distinct()
+                    .ToArray();
+                if (conditions.Length > 1)
+                {
+                    throw new MediaAssetConditionConflictException(
+                        hashGroup.Key,
+                        conditions[0],
+                        conditions[1]);
+                }
+
+                if (groupItems.Any(item => item.ByteLength != groupItems[0].ByteLength))
+                {
+                    throw new InvalidDataException(
+                        "Staged files with the same SHA-256 hash have inconsistent lengths.");
+                }
+
+                Guid assetId;
+                string workspaceRelativePath;
+                if (existingAssetsByHash.TryGetValue(hashGroup.Key, out var existingAsset))
+                {
+                    await _localMediaStagingService.VerifyExistingAssetAsync(
+                        layout,
+                        existingAsset.Id,
+                        existingAsset.WorkspaceRelativePath,
+                        existingAsset.Sha256,
+                        existingAsset.ByteLength,
+                        processingCancellation.Token);
+                    if (existingConditionsByAsset.TryGetValue(existingAsset.Id, out var existingConditions)
+                        && existingConditions.Any(condition => condition != conditions[0]))
+                    {
+                        throw new MediaAssetConditionConflictException(
+                            hashGroup.Key,
+                            existingConditions.First(condition => condition != conditions[0]),
+                            conditions[0]);
+                    }
+
+                    assetId = existingAsset.Id;
+                    workspaceRelativePath = existingAsset.WorkspaceRelativePath;
+                }
+                else
+                {
+                    var stagedItem = groupItems[0];
+                    var video = pendingById[stagedItem.TrainingVideoId];
+                    assetId = Guid.NewGuid();
+                    var promoted = await _localMediaStagingService.PromoteAsync(
+                        layout,
+                        stagedItem,
+                        video.RecordingDateLabel,
+                        stagedItem.SourceFileName,
+                        assetId,
+                        processingCancellation.Token);
+                    promotedAssets.Add(promoted);
+                    workspaceRelativePath = promoted.WorkspaceRelativeOriginalPath;
+                }
+
+                registrations.AddRange(groupItems.Select(item => new MediaAssetRegistration(
+                    item.TrainingVideoId,
+                    assetId,
+                    item.Sha256,
+                    workspaceRelativePath,
+                    item.ByteLength)));
+            }
+
+            var heartbeatError = await StopHeartbeatAsync();
+            if (heartbeatError is not null)
+            {
+                throw new IOException("Media-ingest progress could not be persisted.", heartbeatError);
+            }
+
+            if (!await profileStore.UpdateProcessingJobProgressAsync(
+                    jobId,
+                    ProcessingJobState.Running,
+                    pendingVideos.Length,
+                    totalBytes,
+                    DateTimeOffset.UtcNow,
+                    processingCancellation.Token))
+            {
+                throw new InvalidOperationException("The media-ingest job stopped before completion.");
+            }
+
+            var completedAssets = await profileStore.CompleteLocalMediaIngestJobAsync(
+                jobId,
+                registrations,
+                DateTimeOffset.UtcNow,
+                processingCancellation.Token);
+            databaseCompletionCommitted = true;
+            _processingCanBeCancelled = false;
+            CancelProcessingButton.IsEnabled = false;
+            selected.SetLiveStatus("Media registered · finalizing workspace state…");
+            StatusText.Text = "Media registration committed. Finalizing workspace state…";
+
+            var completedAssetsByHash = completedAssets.ToDictionary(
+                asset => asset.Sha256,
+                StringComparer.Ordinal);
+            var promotionCleanupWarning = false;
+            foreach (var promoted in promotedAssets.AsEnumerable().Reverse())
+            {
+                if (completedAssetsByHash[promoted.Sha256].Id == promoted.AssetId)
+                {
+                    try
+                    {
+                        _localMediaStagingService.CommitPromotion(layout, promoted);
+                    }
+                    catch (Exception exception) when (
+                        exception is ArgumentException or IOException or UnauthorizedAccessException)
+                    {
+                        promotionCleanupWarning = true;
+                    }
+
+                    continue;
+                }
+
+                try
+                {
+                    _localMediaStagingService.RollbackPromotion(layout, promoted);
+                }
+                catch (Exception exception) when (
+                    exception is ArgumentException or IOException or UnauthorizedAccessException)
+                {
+                    promotionCleanupWarning = true;
+                }
+            }
+
+            await ReloadProfilesAsync(profile.Id);
+            StatusText.Text = promotionCleanupWarning
+                ? "Media was ingested and is awaiting FFmpeg validation, but promotion-journal cleanup needs inspection in the Processing and Media folders."
+                : "Media ingested successfully. The app-managed copies are awaiting FFmpeg validation; no analysis or scoring was performed.";
+        }
+        catch (OperationCanceledException)
+        {
+            var heartbeatError = await StopHeartbeatAsync();
+            var terminalState = heartbeatError is null
+                ? ProcessingJobState.Cancelled
+                : ProcessingJobState.Failed;
+            var rollbackWarning = !databaseCompletionCommitted
+                && layout is not null
+                && !RollbackPromotions(layout, promotedAssets);
+            var terminalStateRecorded = true;
+            if (jobStarted && !databaseCompletionCommitted && profileStore is not null)
+            {
+                terminalStateRecorded = await TryTerminateProcessingJobAsync(
+                    profileStore,
+                    jobId,
+                    terminalState,
+                    terminalState == ProcessingJobState.Failed
+                        ? "Media ingest stopped because progress persistence failed."
+                        : null);
+            }
+
+            var refreshWarning = jobStarted
+                ? await TryReloadProfilesAfterProcessingAsync(selected.Id)
+                : null;
+            StatusText.Text = terminalState == ProcessingJobState.Cancelled
+                ? jobStarted
+                    ? "Media ingest cancelled. Open files were closed and no partial copy was promoted. The bounded Processing job folder was retained."
+                    : "Media verification cancelled. Open files were closed and no processing job was created."
+                : "Media ingest failed because its progress could not be persisted. No partial copy was accepted.";
+            if (rollbackWarning)
+            {
+                StatusText.Text += " A promoted folder could not be returned to the Processing job; inspect the workspace.";
+            }
+
+            if (!terminalStateRecorded)
+            {
+                StatusText.Text += " The terminal job status could not be saved; use Refresh after the ten-minute recovery grace period.";
+            }
+
+            if (refreshWarning is not null)
+            {
+                StatusText.Text += " The profile list could not be refreshed: " + refreshWarning;
+            }
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or ArithmeticException
+                or IOException
+                or UnauthorizedAccessException
+                or InvalidOperationException
+                or DbException
+                or FormatException)
+        {
+            await StopHeartbeatAsync();
+            var rollbackWarning = !databaseCompletionCommitted
+                && layout is not null
+                && !RollbackPromotions(layout, promotedAssets);
+            var terminalStateRecorded = true;
+            if (jobStarted && !databaseCompletionCommitted && profileStore is not null)
+            {
+                terminalStateRecorded = await TryTerminateProcessingJobAsync(
+                    profileStore,
+                    jobId,
+                    ProcessingJobState.Failed,
+                    "Media ingest failed before completion.");
+            }
+
+            var refreshWarning = jobStarted
+                ? await TryReloadProfilesAfterProcessingAsync(selected.Id)
+                : null;
+            StatusText.Text = mediaIntegrityFailure
+                ? "Workspace media verification failed: " + exception.Message
+                : exception is MediaAssetConditionConflictException
+                ? "The same media content appears in both training conditions. Resolve the conflicting labels before processing again."
+                : databaseCompletionCommitted
+                    ? "Media ingest completed, but the profile list could not be refreshed: " + exception.Message
+                    : "Media ingest failed; no partial copy was accepted: " + exception.Message;
+            if (rollbackWarning)
+            {
+                StatusText.Text += " A promoted folder could not be returned to the Processing job; inspect the workspace.";
+            }
+
+            if (!terminalStateRecorded)
+            {
+                StatusText.Text += " The failed job status could not be saved; use Refresh after the ten-minute recovery grace period.";
+            }
+
+            if (refreshWarning is not null)
+            {
+                StatusText.Text += " The profile list could not be refreshed: " + refreshWarning;
+            }
+        }
+        finally
+        {
+            await StopHeartbeatAsync();
+            heartbeatStop?.Dispose();
+            processingCancellation.Dispose();
+            if (_activeProcessingProfileId == selected.Id)
+            {
+                _activeProcessingCancellation = null;
+                _activeProcessingProfileId = null;
+            }
+
+            _processingCanBeCancelled = false;
+
+            selected.SetLiveStatus(mediaIntegrityFailure ? "Workspace media needs repair" : null);
+            SetProcessingUiState(isProcessing: false);
+        }
+    }
+
+    private static async Task<Exception?> RunProcessingHeartbeatAsync(
+        SqliteProfileStore profileStore,
+        Guid jobId,
+        Func<(int CompletedItems, long CompletedBytes)> readProgress,
+        CancellationTokenSource processingCancellation,
+        CancellationToken stopToken)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+            while (await timer.WaitForNextTickAsync(stopToken))
+            {
+                var progress = readProgress();
+                if (!await profileStore.UpdateProcessingJobProgressAsync(
+                        jobId,
+                        ProcessingJobState.Running,
+                        progress.CompletedItems,
+                        progress.CompletedBytes,
+                        DateTimeOffset.UtcNow,
+                        stopToken))
+                {
+                    throw new InvalidOperationException(
+                        "The media-ingest job is no longer active in profile storage.");
+                }
+            }
+
+            return null;
+        }
+        catch (OperationCanceledException) when (stopToken.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or IOException
+                or UnauthorizedAccessException
+                or InvalidOperationException
+                or DbException
+                or FormatException)
+        {
+            processingCancellation.Cancel();
+            return exception;
+        }
+    }
+
+    private bool RollbackPromotions(
+        ProfileWorkspaceLayout layout,
+        IEnumerable<PromotedLocalMediaAsset> promotedAssets)
+    {
+        var allRolledBack = true;
+        foreach (var promoted in promotedAssets.Reverse())
+        {
+            try
+            {
+                _localMediaStagingService.RollbackPromotion(layout, promoted);
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException or IOException or UnauthorizedAccessException)
+            {
+                allRolledBack = false;
+            }
+        }
+
+        return allRolledBack;
+    }
+
+    private static async Task<bool> TryTerminateProcessingJobAsync(
+        SqliteProfileStore profileStore,
+        Guid jobId,
+        ProcessingJobState terminalState,
+        string? error)
+    {
+        try
+        {
+            return await profileStore.TerminateProcessingJobAsync(
+                jobId,
+                terminalState,
+                error,
+                DateTimeOffset.UtcNow);
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or IOException
+                or UnauthorizedAccessException
+                or InvalidOperationException
+                or DbException
+                or FormatException)
+        {
+            // The stale-job recovery path will reconcile a terminal-state write failure.
+            return false;
+        }
+    }
+
+    private async Task<string?> TryReloadProfilesAfterProcessingAsync(Guid profileId)
+    {
+        try
+        {
+            await ReloadProfilesAsync(profileId);
+            return null;
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or IOException
+                or UnauthorizedAccessException
+                or InvalidOperationException
+                or DbException
+                or FormatException)
+        {
+            return exception.Message;
+        }
+    }
+
+    private void SetProcessingUiState(bool isProcessing)
+    {
+        AddProfileButton.IsEnabled = _profileStorageReady && !isProcessing;
+        EditProfileButton.IsEnabled = _profileStorageReady && !isProcessing;
+        RefreshProfilesButton.IsEnabled = _profileStorageReady && !isProcessing;
+        ProfilesList.IsEnabled = !isProcessing;
+        UpdateProfileActionButtons();
+    }
+
     private async void ChooseWorkspace_Click(object sender, RoutedEventArgs e)
     {
         var selectedPath = await PickFolderAsync();
@@ -136,6 +839,12 @@ public sealed partial class MainWindow : Window
     {
         if (sender is not Button { DataContext: TrainingVideoItemViewModel video })
         {
+            return;
+        }
+
+        if (!video.CanRemove)
+        {
+            StatusText.Text = "Ingested media cannot be removed as an unprocessed selection. Archive it to exclude it from future work.";
             return;
         }
 
@@ -253,6 +962,12 @@ public sealed partial class MainWindow : Window
         {
             var layout = ProfileWorkspaceLayout.Create(draft.WorkspaceRoot, draft.DownloadStagingRoot);
             var now = DateTimeOffset.UtcNow;
+            var storedVideos = BuildStoredVideos();
+            var activeStoredVideos = storedVideos.Where(video => !video.IsArchived).ToArray();
+            var readiness = activeStoredVideos.Length > 0
+                && activeStoredVideos.All(video => video.MediaAssetId is not null)
+                    ? ProfileReadiness.MediaIngestedAwaitingProbe
+                    : ProfileReadiness.Draft;
             var storedProfile = new StoredProfile(
                 editingProfile?.Id ?? Guid.NewGuid(),
                 draft.DisplayName,
@@ -260,10 +975,10 @@ public sealed partial class MainWindow : Window
                 string.IsNullOrWhiteSpace(draft.DownloadStagingRoot)
                     ? null
                     : layout.DownloadStagingRoot,
-                ProfileReadiness.Draft.ToString(),
+                readiness.ToString(),
                 editingProfile?.CreatedAtUtc ?? now,
                 now,
-                BuildStoredVideos());
+                storedVideos);
 
             if (operationMode == EditorMode.Edit)
             {
@@ -307,7 +1022,9 @@ public sealed partial class MainWindow : Window
             ResetDraftForm();
             ShowMainView();
             StatusText.Text = operationMode == EditorMode.Edit
-                ? "Profile changes saved. The profile remains Draft — not processed."
+                ? storedProfile.Readiness == ProfileReadiness.MediaIngestedAwaitingProbe.ToString()
+                    ? "Profile changes saved. Every active media selection remains registered and awaits validation."
+                    : "Profile changes saved. New or changed active selections await media ingest."
                 : "Draft saved persistently. Workspace folders were created; media was not copied or processed.";
         }
         catch (Exception exception) when (
@@ -372,6 +1089,8 @@ public sealed partial class MainWindow : Window
             await ReloadProfilesAsync();
             AddProfileButton.IsEnabled = true;
             EditProfileButton.IsEnabled = true;
+            _profileStorageReady = true;
+            UpdateProfileActionButtons();
             StatusText.Text = BuildLoadedProfilesStatus();
         }
         catch (Exception exception) when (
@@ -389,6 +1108,9 @@ public sealed partial class MainWindow : Window
     {
         var locators = await _profileCatalog.GetAllAsync();
         _profiles.Clear();
+        _recoveredProcessingJobCount = 0;
+        _reconciledPromotionCount = 0;
+        _promotionRecoveryWarningCount = 0;
         _unavailableProfileCount = _profileCatalog.LastInvalidLocatorCount;
 
         ProfileSummaryViewModel? selection = null;
@@ -418,6 +1140,29 @@ public sealed partial class MainWindow : Window
                 }
 
                 var profileStore = CreateProfileStore(locator.WorkspaceRoot);
+                var recoveredAtUtc = DateTimeOffset.UtcNow;
+                var staleBeforeUtc = recoveredAtUtc - ProcessingJobRecoveryAge;
+                var processingJobs = await profileStore.GetProcessingJobsAsync(locator.ProfileId);
+                var eligibleJournalJobs = processingJobs
+                    .Where(job =>
+                        job.State is not ProcessingJobState.Queued and not ProcessingJobState.Running
+                        || job.UpdatedAtUtc < staleBeforeUtc)
+                    .Select(job => job.Id)
+                    .ToHashSet();
+                var committedAssets = await profileStore.GetMediaAssetsAsync(locator.ProfileId);
+                var reconciliation = await _localMediaStagingService.ReconcilePendingPromotionsAsync(
+                    layout,
+                    committedAssets.ToDictionary(
+                        asset => asset.Id,
+                        asset => asset.WorkspaceRelativePath),
+                    eligibleJournalJobs);
+                _reconciledPromotionCount += reconciliation.CompletedCommittedPromotions
+                    + reconciliation.RolledBackUncommittedPromotions
+                    + reconciliation.ClearedPreparedPromotions;
+                _promotionRecoveryWarningCount += reconciliation.WarningCount;
+                _recoveredProcessingJobCount += await profileStore.RecoverInterruptedJobsAsync(
+                    staleBeforeUtc,
+                    recoveredAtUtc);
                 profile = await profileStore.GetByIdAsync(locator.ProfileId);
                 if (profile is null)
                 {
@@ -474,7 +1219,9 @@ public sealed partial class MainWindow : Window
                 profile.WorkspaceRoot,
                 activeVideos.Count(video => video.Condition == TrainingCondition.VerifiedSincereTruth),
                 activeVideos.Count(video => video.Condition == TrainingCondition.VerifiedIntentionalDeception),
-                profile.TrainingVideos.Count(video => video.IsArchived));
+                profile.TrainingVideos.Count(video => video.IsArchived),
+                activeVideos.Count(video => video.MediaAssetId is null),
+                profile.Readiness);
             _profiles.Add(summary);
 
             if (summary.Id == profileToSelect)
@@ -490,6 +1237,7 @@ public sealed partial class MainWindow : Window
             ? "No saved profiles yet."
             : "No profiles are currently available. See the status message for the unavailable count.";
         ProfilesList.SelectedItem = selection;
+        UpdateProfileActionButtons();
 
         if (profileToSelect.HasValue && selection is null)
         {
@@ -575,7 +1323,21 @@ public sealed partial class MainWindow : Window
         var unavailableStatus = _unavailableProfileCount == 0
             ? string.Empty
             : $"; {_unavailableProfileCount} catalog entry or profile database is unavailable";
-        return loadedStatus + unavailableStatus + ". No analysis or scoring is implemented.";
+        var recoveryStatus = _recoveredProcessingJobCount == 0
+            ? string.Empty
+            : $"; {_recoveredProcessingJobCount} stale media-ingest job(s) marked interrupted";
+        var promotionStatus = _reconciledPromotionCount == 0
+            ? string.Empty
+            : $"; {_reconciledPromotionCount} interrupted media promotion(s) reconciled";
+        var promotionWarning = _promotionRecoveryWarningCount == 0
+            ? string.Empty
+            : $"; {_promotionRecoveryWarningCount} media promotion journal(s) need manual inspection";
+        return loadedStatus
+            + unavailableStatus
+            + recoveryStatus
+            + promotionStatus
+            + promotionWarning
+            + ". No analysis or scoring is implemented.";
     }
 
     private void PopulateEditor(StoredProfile profile)
@@ -592,7 +1354,8 @@ public sealed partial class MainWindow : Window
                 storedVideo.Condition,
                 storedVideo.RecordingDateLabel,
                 storedVideo.IsArchived,
-                isPersisted: true));
+                isPersisted: true,
+                storedVideo.MediaAssetId));
         }
     }
 
@@ -600,7 +1363,7 @@ public sealed partial class MainWindow : Window
     {
         ProfileFormTitle.Text = "Add Profile";
         ProfileFormDescription.Text =
-            "Create a persistent draft and its inspectable local workspace. No media is copied or processed yet.";
+            "Create a persistent draft and its inspectable local workspace. Saving does not copy media; use Process Data from the main view afterward.";
         SaveDraftButton.Content = "Save draft";
         ChooseWorkspaceButton.IsEnabled = true;
         ChooseDownloadRootButton.IsEnabled = true;
@@ -611,7 +1374,7 @@ public sealed partial class MainWindow : Window
     {
         ProfileFormTitle.Text = "Edit Profile";
         ProfileFormDescription.Text =
-            "Edit the saved draft metadata and training selections. Workspace relocation is deferred; no media is copied or processed.";
+            "Edit metadata and training eligibility. Saving does not copy media; use Process Data from the main view for new active selections. Workspace relocation is deferred.";
         SaveDraftButton.Content = "Save changes";
         ChooseWorkspaceButton.IsEnabled = false;
         ChooseDownloadRootButton.IsEnabled = false;
@@ -629,7 +1392,8 @@ public sealed partial class MainWindow : Window
                 video.RecordingDateLabel,
                 video.Condition,
                 video.IsArchived,
-                sortOrder++))
+                sortOrder++,
+                video.MediaAssetId))
             .ToArray();
     }
 
@@ -749,6 +1513,18 @@ public sealed partial class MainWindow : Window
         MainView.Visibility = Visibility.Visible;
         _editingProfile = null;
         _editorMode = EditorMode.Add;
+        UpdateProfileActionButtons();
+    }
+
+    private void UpdateProfileActionButtons()
+    {
+        var selected = ProfilesList.SelectedItem as ProfileSummaryViewModel;
+        var processingInThisWindow = _activeProcessingCancellation is not null;
+        ProcessDataButton.IsEnabled = _profileStorageReady
+            && !processingInThisWindow
+            && selected?.CanStartIngest == true;
+        CancelProcessingButton.IsEnabled = processingInThisWindow && _processingCanBeCancelled;
+        RefreshProfilesButton.IsEnabled = _profileStorageReady && !processingInThisWindow;
     }
 
     private void ShowValidation(IEnumerable<string> messages)
@@ -768,5 +1544,12 @@ public sealed partial class MainWindow : Window
     {
         Add,
         Edit,
+    }
+
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+    {
+        private readonly Action<T> _report = report ?? throw new ArgumentNullException(nameof(report));
+
+        public void Report(T value) => _report(value);
     }
 }

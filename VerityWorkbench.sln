@@ -13,6 +13,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VerityWorkbench.Data", "src
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VerityWorkbench.Data.Tests", "tests\VerityWorkbench.Data.Tests\VerityWorkbench.Data.Tests.csproj", "{BA2EA7C4-5DB4-4CC0-812E-60CAFA070A24}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VerityWorkbench.Media", "src\VerityWorkbench.Media\VerityWorkbench.Media.csproj", "{15760AAE-682F-4E68-A02B-1E9156B8F7E5}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VerityWorkbench.Media.Tests", "tests\VerityWorkbench.Media.Tests\VerityWorkbench.Media.Tests.csproj", "{CC047DE3-7287-4B15-8438-282170A40F54}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -39,6 +43,14 @@ Global
 		{BA2EA7C4-5DB4-4CC0-812E-60CAFA070A24}.Debug|x64.Build.0 = Debug|Any CPU
 		{BA2EA7C4-5DB4-4CC0-812E-60CAFA070A24}.Release|x64.ActiveCfg = Release|Any CPU
 		{BA2EA7C4-5DB4-4CC0-812E-60CAFA070A24}.Release|x64.Build.0 = Release|Any CPU
+		{15760AAE-682F-4E68-A02B-1E9156B8F7E5}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{15760AAE-682F-4E68-A02B-1E9156B8F7E5}.Debug|x64.Build.0 = Debug|Any CPU
+		{15760AAE-682F-4E68-A02B-1E9156B8F7E5}.Release|x64.ActiveCfg = Release|Any CPU
+		{15760AAE-682F-4E68-A02B-1E9156B8F7E5}.Release|x64.Build.0 = Release|Any CPU
+		{CC047DE3-7287-4B15-8438-282170A40F54}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{CC047DE3-7287-4B15-8438-282170A40F54}.Debug|x64.Build.0 = Debug|Any CPU
+		{CC047DE3-7287-4B15-8438-282170A40F54}.Release|x64.ActiveCfg = Release|Any CPU
+		{CC047DE3-7287-4B15-8438-282170A40F54}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

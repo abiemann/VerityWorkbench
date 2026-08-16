@@ -8,4 +8,5 @@ public sealed record StoredTrainingVideo(
     string RecordingDateLabel,
     TrainingCondition Condition,
     bool IsArchived,
-    int SortOrder);
+    int SortOrder,
+    Guid? MediaAssetId = null);

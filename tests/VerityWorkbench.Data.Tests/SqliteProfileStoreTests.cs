@@ -47,23 +47,23 @@ public sealed class SqliteProfileStoreTests
     }
 
     [Fact]
-    public async Task CleanDatabaseIsCreatedAtSchemaVersionTwo()
+    public async Task CleanDatabaseIsCreatedAtCurrentSchemaVersion()
     {
         using var database = new TestDatabase();
         await database.Store.InitializeAsync();
 
-        Assert.Equal(2L, await ReadSchemaVersionAsync(database.DatabasePath));
+        Assert.Equal(3L, await ReadSchemaVersionAsync(database.DatabasePath));
     }
 
     [Fact]
-    public async Task VersionOneDatabaseMigratesToVersionTwoWithWorkspaceUniqueness()
+    public async Task VersionOneDatabaseMigratesToCurrentSchemaWithWorkspaceUniqueness()
     {
         using var database = new TestDatabase();
         await CreateVersionOneDatabaseAsync(database.DatabasePath);
 
         await database.Store.InitializeAsync();
 
-        Assert.Equal(2L, await ReadSchemaVersionAsync(database.DatabasePath));
+        Assert.Equal(3L, await ReadSchemaVersionAsync(database.DatabasePath));
         Assert.True(await HasIndexAsync(
             database.DatabasePath,
             "ux_profiles_workspace_root_nocase"));
