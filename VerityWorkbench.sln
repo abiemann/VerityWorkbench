@@ -1,0 +1,46 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 18
+VisualStudioVersion = 18.0.0.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VerityWorkbench.Core", "src\VerityWorkbench.Core\VerityWorkbench.Core.csproj", "{2CDDC663-A4E2-4B36-946B-63F0D6D8C273}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VerityWorkbench.App", "src\VerityWorkbench.App\VerityWorkbench.App.csproj", "{47C291E7-59E2-4F14-945C-2EF4E9AE04A7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VerityWorkbench.Core.Tests", "tests\VerityWorkbench.Core.Tests\VerityWorkbench.Core.Tests.csproj", "{890B266B-21FD-44BD-B0F0-9EA183471A38}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VerityWorkbench.Data", "src\VerityWorkbench.Data\VerityWorkbench.Data.csproj", "{63A9DBE7-4921-47EE-8C03-645F75BE59F1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VerityWorkbench.Data.Tests", "tests\VerityWorkbench.Data.Tests\VerityWorkbench.Data.Tests.csproj", "{BA2EA7C4-5DB4-4CC0-812E-60CAFA070A24}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2CDDC663-A4E2-4B36-946B-63F0D6D8C273}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{2CDDC663-A4E2-4B36-946B-63F0D6D8C273}.Debug|x64.Build.0 = Debug|Any CPU
+		{2CDDC663-A4E2-4B36-946B-63F0D6D8C273}.Release|x64.ActiveCfg = Release|Any CPU
+		{2CDDC663-A4E2-4B36-946B-63F0D6D8C273}.Release|x64.Build.0 = Release|Any CPU
+		{47C291E7-59E2-4F14-945C-2EF4E9AE04A7}.Debug|x64.ActiveCfg = Debug|x64
+		{47C291E7-59E2-4F14-945C-2EF4E9AE04A7}.Debug|x64.Build.0 = Debug|x64
+		{47C291E7-59E2-4F14-945C-2EF4E9AE04A7}.Release|x64.ActiveCfg = Release|x64
+		{47C291E7-59E2-4F14-945C-2EF4E9AE04A7}.Release|x64.Build.0 = Release|x64
+		{890B266B-21FD-44BD-B0F0-9EA183471A38}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{890B266B-21FD-44BD-B0F0-9EA183471A38}.Debug|x64.Build.0 = Debug|Any CPU
+		{890B266B-21FD-44BD-B0F0-9EA183471A38}.Release|x64.ActiveCfg = Release|Any CPU
+		{890B266B-21FD-44BD-B0F0-9EA183471A38}.Release|x64.Build.0 = Release|Any CPU
+		{63A9DBE7-4921-47EE-8C03-645F75BE59F1}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{63A9DBE7-4921-47EE-8C03-645F75BE59F1}.Debug|x64.Build.0 = Debug|Any CPU
+		{63A9DBE7-4921-47EE-8C03-645F75BE59F1}.Release|x64.ActiveCfg = Release|Any CPU
+		{63A9DBE7-4921-47EE-8C03-645F75BE59F1}.Release|x64.Build.0 = Release|Any CPU
+		{BA2EA7C4-5DB4-4CC0-812E-60CAFA070A24}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{BA2EA7C4-5DB4-4CC0-812E-60CAFA070A24}.Debug|x64.Build.0 = Debug|Any CPU
+		{BA2EA7C4-5DB4-4CC0-812E-60CAFA070A24}.Release|x64.ActiveCfg = Release|Any CPU
+		{BA2EA7C4-5DB4-4CC0-812E-60CAFA070A24}.Release|x64.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

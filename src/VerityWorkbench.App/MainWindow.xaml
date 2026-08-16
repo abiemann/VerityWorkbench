@@ -1,0 +1,349 @@
+<Window
+    x:Class="VerityWorkbench.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="VerityWorkbench">
+
+    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border
+            Padding="28,18"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="0,0,0,1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock FontSize="26" FontWeight="SemiBold" Text="VerityWorkbench" />
+                    <TextBlock
+                        Margin="0,4,0,0"
+                        Opacity="0.7"
+                        Text="Person-specific multimodal veracity research workbench" />
+                </StackPanel>
+                <Border
+                    Grid.Column="1"
+                    Padding="12,6"
+                    VerticalAlignment="Center"
+                    Background="{ThemeResource AccentFillColorSecondaryBrush}"
+                    CornerRadius="16">
+                    <TextBlock Text="Milestone 2 · persistent profiles" />
+                </Border>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1">
+            <Grid x:Name="MainView" Margin="32">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Border
+                    Padding="16"
+                    Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                    CornerRadius="8">
+                    <StackPanel Spacing="4">
+                        <TextBlock FontWeight="SemiBold" Text="Research limitation" />
+                        <TextBlock
+                            Text="This is not a general-purpose lie detector. Behavioral signals cannot establish factual truth. This milestone creates draft profiles only and produces no score or probability."
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <Grid Grid.Row="1" Margin="0,24,0,24" ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Button
+                        x:Name="AddProfileButton"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Left"
+                        Click="AddProfile_Click">
+                        <StackPanel Padding="8" Spacing="5">
+                            <TextBlock FontSize="18" FontWeight="SemiBold" Text="Add Profile" />
+                            <TextBlock Opacity="0.7" Text="Create a local draft" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button
+                        x:Name="EditProfileButton"
+                        Grid.Column="1"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Left"
+                        Click="EditProfile_Click">
+                        <StackPanel Padding="8" Spacing="5">
+                            <TextBlock FontSize="18" FontWeight="SemiBold" Text="Edit Profile" />
+                            <TextBlock Opacity="0.7" Text="Update a selected draft" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button
+                        Grid.Column="2"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Left"
+                        Click="QueryProfile_Click">
+                        <StackPanel Padding="8" Spacing="5">
+                            <TextBlock FontSize="18" FontWeight="SemiBold" Text="Query Profile" />
+                            <TextBlock Opacity="0.7" Text="Unavailable until validation exists" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+
+                <StackPanel Grid.Row="2" Spacing="10">
+                    <TextBlock FontSize="20" FontWeight="SemiBold" Text="Profiles" />
+                    <TextBlock
+                        x:Name="EmptyProfilesText"
+                        Opacity="0.7"
+                        Text="No saved profiles yet." />
+                    <ListView x:Name="ProfilesList" SelectionMode="Single">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Border
+                                    Margin="0,3"
+                                    Padding="14"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="8">
+                                    <Grid ColumnSpacing="20">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="2*" />
+                                            <ColumnDefinition Width="3*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock FontWeight="SemiBold" Text="{Binding DisplayName}" />
+                                            <TextBlock Opacity="0.65" Text="{Binding WorkspaceRoot}" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <TextBlock
+                                            Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            Text="{Binding TrainingSummary}"
+                                            TextWrapping="Wrap" />
+                                        <TextBlock
+                                            Grid.Column="2"
+                                            VerticalAlignment="Center"
+                                            FontWeight="SemiBold"
+                                            Text="{Binding Status}" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </StackPanel>
+            </Grid>
+
+            <ScrollViewer
+                x:Name="AddProfileView"
+                Visibility="Collapsed"
+                VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="32" MaxWidth="1120" HorizontalAlignment="Stretch" Spacing="22">
+                    <StackPanel Spacing="5">
+                        <TextBlock x:Name="ProfileFormTitle" FontSize="26" FontWeight="SemiBold" Text="Add Profile" />
+                        <TextBlock
+                            x:Name="ProfileFormDescription"
+                            Opacity="0.7"
+                            Text="Create a persistent draft and its inspectable local workspace. No media is copied or processed yet."
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <TextBox
+                        x:Name="ProfileNameBox"
+                        Header="Pseudonymous profile name"
+                        PlaceholderText="For example: Subject A" />
+
+                    <StackPanel Spacing="8">
+                        <TextBlock FontWeight="SemiBold" Text="Profile workspace" />
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                x:Name="WorkspaceRootBox"
+                                PlaceholderText="Choose a dedicated workload folder"
+                                IsReadOnly="True" />
+                            <Button x:Name="ChooseWorkspaceButton" Grid.Column="1" Click="ChooseWorkspace_Click" Content="Choose folder…" />
+                        </Grid>
+                        <TextBlock
+                            Opacity="0.65"
+                            Text="A drive root is never accepted. Saving creates only the named VerityWorkbench subfolders shown in the README."
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <StackPanel Spacing="8">
+                        <TextBlock FontWeight="SemiBold" Text="Download staging folder" />
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                x:Name="DownloadRootBox"
+                                PlaceholderText="Default: Downloads inside the profile workspace"
+                                IsReadOnly="True" />
+                            <Button x:Name="ChooseDownloadRootButton" Grid.Column="1" Click="ChooseDownloadRoot_Click" Content="Choose folder…" />
+                            <Button x:Name="UseDefaultDownloadRootButton" Grid.Column="2" Click="UseDefaultDownloadRoot_Click" Content="Use default" />
+                        </Grid>
+                    </StackPanel>
+
+                    <Border
+                        Padding="14"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                        <TextBlock
+                            Text="This slice accepts explicitly selected local MP4 files only. Direct-URL downloads, resumable transfer, and .vwpkg import are planned and are not simulated here."
+                            TextWrapping="Wrap" />
+                    </Border>
+
+                    <StackPanel Spacing="10">
+                        <TextBlock FontSize="20" FontWeight="SemiBold" Text="Verified sincere-truth training videos" />
+                        <TextBlock
+                            Opacity="0.7"
+                            Text="Supported file: .mp4. The bucket and labels are supplied by the user/adjudicator, never inferred by the model."
+                            TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Click="AddTruthfulVideos_Click" Content="Add MP4 files…" />
+                            <Button Click="SortTruthfulVideos_Click" Content="Sort by recording label" />
+                        </StackPanel>
+                        <ListView x:Name="TruthfulVideosList" MinHeight="125" SelectionMode="Single">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,5" ColumnSpacing="18">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="240" />
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock FontWeight="SemiBold" Text="{Binding FileName}" />
+                                            <TextBlock Opacity="0.65" Text="{Binding FullPath}" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <TextBox
+                                            Grid.Column="1"
+                                            Header="Recording date label"
+                                            KeyDown="RecordingDateLabel_KeyDown"
+                                            PlaceholderText="Display/sort text only"
+                                            Text="{Binding RecordingDateLabel, Mode=TwoWay}" />
+                                        <TextBlock
+                                            Grid.Column="2"
+                                            VerticalAlignment="Center"
+                                            FontWeight="SemiBold"
+                                            Text="{Binding ArchiveStatus}" />
+                                        <StackPanel
+                                            Grid.Column="3"
+                                            VerticalAlignment="Center"
+                                            Orientation="Horizontal"
+                                            Spacing="8">
+                                            <Button
+                                                Click="RemoveTrainingVideo_Click"
+                                                Content="Remove" />
+                                            <Button
+                                                Click="ArchiveTrainingVideo_Click"
+                                                Content="{Binding ArchiveActionLabel}"
+                                                IsEnabled="{Binding CanArchive}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+
+                    <StackPanel Spacing="10">
+                        <TextBlock FontSize="20" FontWeight="SemiBold" Text="Verified intentional-deception training videos" />
+                        <TextBlock
+                            Opacity="0.7"
+                            Text="Include only material independently supported as intentionally deceptive under the curated protocol."
+                            TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Click="AddDeceptionVideos_Click" Content="Add MP4 files…" />
+                            <Button Click="SortDeceptionVideos_Click" Content="Sort by recording label" />
+                        </StackPanel>
+                        <ListView x:Name="DeceptionVideosList" MinHeight="125" SelectionMode="Single">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,5" ColumnSpacing="18">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="240" />
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock FontWeight="SemiBold" Text="{Binding FileName}" />
+                                            <TextBlock Opacity="0.65" Text="{Binding FullPath}" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <TextBox
+                                            Grid.Column="1"
+                                            Header="Recording date label"
+                                            KeyDown="RecordingDateLabel_KeyDown"
+                                            PlaceholderText="Display/sort text only"
+                                            Text="{Binding RecordingDateLabel, Mode=TwoWay}" />
+                                        <TextBlock
+                                            Grid.Column="2"
+                                            VerticalAlignment="Center"
+                                            FontWeight="SemiBold"
+                                            Text="{Binding ArchiveStatus}" />
+                                        <StackPanel
+                                            Grid.Column="3"
+                                            VerticalAlignment="Center"
+                                            Orientation="Horizontal"
+                                            Spacing="8">
+                                            <Button
+                                                Click="RemoveTrainingVideo_Click"
+                                                Content="Remove" />
+                                            <Button
+                                                Click="ArchiveTrainingVideo_Click"
+                                                Content="{Binding ArchiveActionLabel}"
+                                                IsEnabled="{Binding CanArchive}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+
+                    <Border
+                        x:Name="ValidationPanel"
+                        Padding="14"
+                        Background="{ThemeResource SystemFillColorCriticalBackgroundBrush}"
+                        CornerRadius="8"
+                        Visibility="Collapsed">
+                        <TextBlock x:Name="ValidationText" TextWrapping="Wrap" />
+                    </Border>
+
+                    <StackPanel Margin="0,0,0,28" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                        <Button Click="CancelAddProfile_Click" Content="Cancel" />
+                        <Button
+                            x:Name="SaveDraftButton"
+                            Click="SaveDraft_Click"
+                            Content="Save draft"
+                            Style="{StaticResource AccentButtonStyle}" />
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <Border
+            Grid.Row="2"
+            Padding="18,10"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="0,1,0,0">
+            <TextBlock x:Name="StatusText" Text="Ready. No analysis or scoring is implemented." />
+        </Border>
+    </Grid>
+</Window>
