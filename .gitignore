@@ -80,12 +80,15 @@ local-workspaces/
 *.transcript.json
 *.transcript.txt
 
+## VerityWorkbench developer-machine configuration and tools
+appsettings.Local.json
+/.local-tools/
+
 ## Secrets and machine-local configuration
 .env
 .env.*
 !.env.example
 appsettings.Development.json
-appsettings.Local.json
 secrets.json
 *.pfx
 *.p12

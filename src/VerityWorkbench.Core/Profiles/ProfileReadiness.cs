@@ -8,5 +8,8 @@ public enum ProfileReadiness
     ValidatingMedia,
     MediaValidationFailed,
     MediaValidated,
+    PreprocessingMedia,
+    MediaPreprocessingFailed,
+    MediaPrepared,
     MediaIntegrityFailed,
 }

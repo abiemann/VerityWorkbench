@@ -25,7 +25,8 @@ public sealed class SqliteProfileStoreMediaIntegrityTests
 
         Assert.Equal(MediaAssetState.IntegrityFailed, changed.State);
         Assert.Equal(
-            "Registered media failed integrity verification; exclude or repair it before validation.",
+            "Registered original media or its prepared derivative bundle failed integrity verification; " +
+            "exclude or repair it before processing.",
             changed.ValidationFailure);
         Assert.Equal(ProfileReadiness.MediaIntegrityFailed.ToString(),
             (await database.Store.GetByIdAsync(profile.Id))!.Readiness);

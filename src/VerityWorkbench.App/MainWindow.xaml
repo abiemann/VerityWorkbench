@@ -34,7 +34,7 @@
                     VerticalAlignment="Center"
                     Background="{ThemeResource AccentFillColorSecondaryBrush}"
                     CornerRadius="16">
-                    <TextBlock Text="Milestone 4 · MP4 media validation" />
+                    <TextBlock Text="Milestone 5 · deterministic preprocessing" />
                 </Border>
             </Grid>
         </Border>
@@ -54,7 +54,7 @@
                     <StackPanel Spacing="4">
                         <TextBlock FontWeight="SemiBold" Text="Research limitation" />
                         <TextBlock
-                            Text="This is not a general-purpose lie detector. Behavioral signals cannot establish factual truth. This milestone validates app-managed MP4 audio/video streams and produces no identity, authenticity, language, behavioral score, or probability result."
+                            Text="This is not a general-purpose lie detector. This milestone creates local playback, analysis-audio, and timestamp-mapping derivatives from validated MP4s. It does not assess identity, authenticity, language, face or voice quality, model applicability, behavior, truth, or deception."
                             TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>

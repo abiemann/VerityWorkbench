@@ -4,6 +4,7 @@ namespace VerityWorkbench.App;
 
 internal sealed record ConfiguredMediaToolchain(
     string ValidationContractVersion,
+    string PreprocessingContractVersion,
     string BuildIdentity,
     string License,
     string FfmpegExecutablePath,
@@ -50,6 +51,8 @@ internal static class MediaToolchainConfiguration
         return new ConfiguredMediaToolchain(
             manifestRoot.GetProperty("validationContractVersion").GetString()
                 ?? throw new InvalidDataException("The media validation contract is missing."),
+            manifestRoot.GetProperty("preprocessingContractVersion").GetString()
+                ?? throw new InvalidDataException("The media preprocessing contract is missing."),
             manifestRoot.GetProperty("buildIdentity").GetString()
                 ?? throw new InvalidDataException("The approved FFmpeg build identity is missing."),
             manifestRoot.GetProperty("license").GetString()

@@ -52,7 +52,7 @@ public sealed class SqliteProfileStoreTests
         using var database = new TestDatabase();
         await database.Store.InitializeAsync();
 
-        Assert.Equal(4L, await ReadSchemaVersionAsync(database.DatabasePath));
+        Assert.Equal(5L, await ReadSchemaVersionAsync(database.DatabasePath));
     }
 
     [Fact]
@@ -63,7 +63,7 @@ public sealed class SqliteProfileStoreTests
 
         await database.Store.InitializeAsync();
 
-        Assert.Equal(4L, await ReadSchemaVersionAsync(database.DatabasePath));
+        Assert.Equal(5L, await ReadSchemaVersionAsync(database.DatabasePath));
         Assert.True(await HasIndexAsync(
             database.DatabasePath,
             "ux_profiles_workspace_root_nocase"));

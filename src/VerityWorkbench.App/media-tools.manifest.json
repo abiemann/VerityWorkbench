@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "validationContractVersion": "verityworkbench.media-validation.v1",
+  "preprocessingContractVersion": "verityworkbench.media-preprocessing.v1",
   "distribution": "BtbN FFmpeg-Builds",
   "releaseTag": "autobuild-2026-08-15-13-02",
   "variant": "win64-lgpl-8.1",

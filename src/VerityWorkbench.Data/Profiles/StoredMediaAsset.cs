@@ -8,5 +8,6 @@ public sealed record StoredMediaAsset(
     long ByteLength,
     MediaAssetState State,
     string? ValidationFailure,
+    string? PreprocessingFailure,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc);

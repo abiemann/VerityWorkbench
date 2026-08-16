@@ -5,5 +5,7 @@ public enum MediaAssetState
     AwaitingProbe,
     Validated,
     ValidationFailed,
+    PreprocessingFailed,
+    Prepared,
     IntegrityFailed,
 }

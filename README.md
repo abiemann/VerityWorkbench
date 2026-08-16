@@ -2,7 +2,7 @@
 
 VerityWorkbench is a local-first Windows research workbench for investigating whether person-specific facial, vocal, timing, and linguistic changes correlate with independently supported intentional deception under controlled conditions.
 
-> Early development — Milestone 4 MP4 media validation. The application creates and edits persistent profiles, copies explicitly selected local MP4s into user-selected app-managed workspace assets, records their integrity metadata, and uses a pinned FFmpeg/ffprobe toolchain to validate an unambiguous video-and-audio stream selection with a complete CPU decode. It does not yet create proxies, extract audio or behavioral features, train a model, verify identity or authenticity, recognize language, or produce any behavioral score or probability.
+> Early development — Milestone 5 deterministic media preprocessing. The application creates and edits persistent profiles, ingests explicitly selected local MP4s into user-selected app-managed workspaces, validates an unambiguous video-and-audio stream selection with a complete CPU decode, and uses the same pinned FFmpeg/ffprobe toolchain to prepare a local playback proxy, mono analysis audio, timestamp map, and privacy-bounded manifest. Media quality and model applicability remain **Not assessed**. The application does not yet transcribe speech, extract behavioral features, train a model, verify identity or authenticity, recognize language, or produce any behavioral score or probability.
 
 The authoritative scientific, product, privacy, and architecture specification is [design_doc.md](design_doc.md).
 
@@ -32,10 +32,12 @@ This repository is being implemented in small, testable slices.
 - [x] Local MP4 staging, SHA-256 hashing, app-managed workspace promotion, and content deduplication
 - [x] Persistent ingest jobs with live progress, cancellation, stale-job recovery, and cross-condition content conflict detection
 - [x] Version- and hash-pinned FFmpeg/ffprobe MP4 probing, normalized metadata persistence, and complete selected-stream CPU decode validation
-- [ ] Media-quality thresholds, timestamp mapping, playback proxies, and audio extraction
+- [x] Deterministic, journaled preprocessing into a playback-only MP4 proxy, mono analysis WAV, affine timestamp map, and hashed manifest
+- [x] Persistent preprocessing results, cancellation, stale-job recovery, and crash-safe artifact promotion/reconciliation
+- [ ] Declared media-quality and model-applicability thresholds; both states currently remain **Not assessed**
 - [ ] Direct-URL resumable downloads
 - [ ] Processing-folder inspection and verified cleanup controls
-- [ ] Playback, transcription, and feature extraction
+- [ ] Playback UI, transcription, and feature extraction
 - [ ] Local multilingual ASR, language confirmation, original-language transcripts, optional separate English translation, and compatible language-model routing
 - [ ] Training, grouped validation, calibration, and local inference
 - [ ] Query-time profile-subject identity gate and face-speaker verification
@@ -43,7 +45,7 @@ This repository is being implemented in small, testable slices.
 - [ ] Query Profile workflow
 - [ ] One-file encrypted `.vwpkg` import/export
 
-**Query Profile** remains deliberately unavailable. Edit Profile updates profile metadata and media eligibility but does not relocate workspaces, delete ingested assets, import packages, or export models. Media validation establishes only that the selected MP4 streams satisfy this engineering contract and decode completely; it does not establish subject identity, media authenticity, spoken language, label correctness, or suitability for model training. No placeholder or random scoring code exists.
+**Query Profile** remains deliberately unavailable. Edit Profile updates profile metadata and media eligibility but does not relocate workspaces, delete ingested assets, import packages, or export models. Validation and preprocessing establish only that the selected MP4 streams satisfy the current engineering contracts and that reproducible local presentation/analysis-audio derivatives were prepared. They do not establish subject identity, media authenticity, spoken language, label correctness, media quality, model applicability, or suitability for model training. The playback proxy is not silently accepted as visual model input. No placeholder or random scoring code exists.
 
 ## What to install
 
@@ -58,7 +60,7 @@ D:\Tools\VerityWorkbench\FFmpeg\8.1\bin\ffprobe.exe
 
 The required build is BtbN FFmpeg-Builds `win64-lgpl-8.1`, build identity `n8.1.2-44-g7c533d0f86-20260815`, from release tag `autobuild-2026-08-15-13-02`. It reports `LGPL version 3 or later`; GPL and nonfree variants are not accepted by this validation contract.
 
-Python, GPU drivers/toolkits, Whisper, and model files are **not needed** for this milestone. Validation deliberately uses the CPU/software decode path.
+No additional install is required for Milestone 5 beyond the pinned FFmpeg/ffprobe toolchain already required by Milestone 4. Python, GPU drivers/toolkits, Whisper, and model files are **not needed** for this milestone. Validation and preprocessing deliberately use CPU/software paths.
 
 ### On another Windows development computer
 
@@ -117,7 +119,7 @@ The app does not search `PATH`. Configure the directory containing `bin` in eith
 - Copy `src\VerityWorkbench.App\appsettings.Local.example.json` to `src\VerityWorkbench.App\appsettings.Local.json`, edit `mediaTools.ffmpegRoot` if needed, and rebuild. `appsettings.Local.json` is intentionally ignored by Git.
 - Before launching the app from a terminal, set `$env:VERITYWORKBENCH_FFMPEG_ROOT` to the absolute root. This environment variable takes precedence over the local settings file.
 
-The tracked [`media-tools.manifest.json`](src/VerityWorkbench.App/media-tools.manifest.json) is the authoritative validation pin: it records the distribution, release tag, variant, exact build identity, declared `LGPL-3.0-or-later` license, executable names, executable SHA-256 hashes, and validation-contract version. At runtime the app independently hashes both executables and checks their reported identity before starting a validation job. A missing, modified, or different build is rejected before profile processing state changes. The manifest records provenance for reproducibility; it does not replace the FFmpeg license notices or any redistribution obligations.
+The tracked [`media-tools.manifest.json`](src/VerityWorkbench.App/media-tools.manifest.json) is the authoritative media-tool pin: it records the distribution, release tag, variant, exact build identity, declared `LGPL-3.0-or-later` license, executable names, executable SHA-256 hashes, and validation/preprocessing contract versions. At runtime the app independently hashes both executables and checks their reported identity before starting a validation or preprocessing job. A missing, modified, or different build is rejected before profile processing state changes. The manifest records provenance for reproducibility; it does not replace the FFmpeg license notices or any redistribution obligations.
 
 ## Build, test, and run
 
@@ -153,6 +155,15 @@ Run all unit and persistence tests:
 dotnet test .\VerityWorkbench.sln --configuration Debug --no-restore -p:Platform=x64
 ```
 
+To exercise the installed-tool integration tests—including generation, validation, hashing, atomic promotion, and verification of the Milestone 5 artifact bundle—set the pinned tool root in the same PowerShell session before running the tests:
+
+```powershell
+$env:VERITYWORKBENCH_FFMPEG_ROOT = 'D:\Tools\VerityWorkbench\FFmpeg\8.1'
+dotnet test .\VerityWorkbench.sln --configuration Debug --no-restore -p:Platform=x64
+```
+
+Without that environment variable, tests that require the separately installed executables return without invoking them; the remaining unit and persistence tests still run.
+
 Run the Windows application after the build succeeds:
 
 ```powershell
@@ -185,7 +196,7 @@ Selecting **Cancel** before saving clears the form and creates no profile or wor
 4. Every row has **Remove**. A previously saved row also has **Archive** or **Unarchive**. Archiving here changes only local selection metadata; it does not move or delete the source MP4. Removing an unprocessed selection removes its current path/label row but never deletes the source MP4. SQLite secure deletion is enabled, but this is not a promise to purge external backups, filesystem snapshots, or storage-device history.
 5. Select **Save changes** to commit the update atomically, or **Cancel** to discard the detached working copy.
 
-Workspace and download roots are read-only during Edit in this milestone. Safe relocation behavior is still unresolved and will not be simulated by merely changing a stored path. Editing starts no background work. Readiness is recalculated from the active selections and their immutable media state: adding or unarchiving an unprocessed selection returns the profile to **Draft — not processed**; a metadata-only edit preserves completed validation; archiving a failed item can make the remaining active set eligible again.
+Workspace and download roots are read-only during Edit in this milestone. Safe relocation behavior is still unresolved and will not be simulated by merely changing a stored path. Editing starts no background work. Readiness is recalculated from the active selections and their immutable media state: adding or unarchiving an unprocessed selection returns the profile to **Draft — not processed**; a metadata-only edit preserves completed validation/preprocessing; archiving a failed item can make the remaining active set eligible again.
 
 If another app window saves the same profile after you opened it, your stale edit is refused and the list is refreshed; the later click does not silently overwrite the earlier save.
 
@@ -203,7 +214,7 @@ Before moving a complete staged copy into `Media`, the app writes a small promot
 
 Content identity is the SHA-256 hash, not a path or filename. Identical content in the same training condition reuses one app-managed asset. The app verifies a stored asset's length and SHA-256 before reusing it and whenever **Process Data** is selected for a registered profile, but it cannot prevent another process or the user from changing workspace files. A missing or changed copy is persistently marked **Workspace media changed — repair required**, which blocks further processing after a restart while preserving the prior immutable validation record for audit. This milestone does not alter, delete, or replace the damaged copy. Archiving every training selection linked to it only excludes that asset so the remaining active set can proceed; it does not repair the asset, and adding the same media again is not a replacement workflow. Retain the original source until a journaled repair workflow is implemented. Identical bytes assigned to both sincere-truth and intentional-deception conditions are rejected for manual label resolution.
 
-**Media registered** means only that the app-managed bytes passed the ingest integrity checks. It does not mean the container or streams have been validated. Keep the original source at least until the second processing stage reports **Media validated — awaiting feature extraction**.
+**Media registered** means only that the app-managed bytes passed the ingest integrity checks. It does not mean the container or streams have been validated. Keep the original source at least until the third processing stage reports **Media prepared — quality and applicability not assessed**.
 
 ### Validate registered MP4 media
 
@@ -212,11 +223,29 @@ Content identity is the SHA-256 hash, not a path or filename. Identical content 
 3. The app rechecks each active workspace copy's expected byte length and SHA-256, then invokes `ffprobe` directly without a shell. The MP4 must have a supported MP4 container and an unambiguous usable stream choice.
 4. Validation requires exactly one selected usable video stream and one selected usable audio stream. Missing, invalid, or ambiguous choices fail safely. Metadata such as codec, dimensions, duration, frame-rate rational, sample rate, channel count, stream indices, and tool provenance is normalized before persistence; raw probe JSON, raw tool errors, executable paths, and original source paths are not stored as validation results.
 5. The selected streams are completely decoded to a null output by the pinned `ffmpeg` executable with hardware acceleration disabled. This is a CPU/software integrity pass over the full selected audio and video streams, not a sample-only header check. The app creates no proxy, extracted audio, frames, thumbnails, transcript, or other media derivative.
-6. The app rechecks the media length and SHA-256 after decoding. Only a stable file that passes the entire contract is marked **Media validated — awaiting feature extraction**. A content rejection is recorded as a bounded, sanitized failure and the profile shows **Media validation needs attention**. A missing or changed registered copy is instead persisted as **Workspace media changed — repair required** and cannot be revalidated until it is repaired or excluded from the active training set.
+6. The app rechecks the media length and SHA-256 after decoding. Only a stable file that passes the entire contract is marked **Media validated — awaiting preprocessing**. A content rejection is recorded as a bounded, sanitized failure and the profile shows **Media validation needs attention**. A missing or changed registered copy is instead persisted as **Workspace media changed — repair required** and cannot be revalidated until it is repaired or excluded from the active training set.
 
 External processes have fixed time and output limits. Select **Cancel Processing** to stop the active validation: the app terminates the child process tree, waits for exit, closes process and media handles, and restores a safe derived profile state without writing a success result. A later **Process Data** attempt can retry failed or interrupted validation; an already successful immutable result is not silently replaced.
 
 This engineering gate says only that the registered MP4, selected stream metadata, and complete CPU decode passed the pinned contract. It does **not** assess recording quality for modeling, confirm the profile subject, associate face and speaker, detect synthetic or manipulated media, recognize or compare spoken language, validate the user's training label, extract features, or produce a score, probability, or statement about truth.
+
+### Prepare validated media
+
+1. Select a profile showing **Media validated — awaiting preprocessing** or **Media preprocessing needs attention**.
+2. Select **Process Data**. VerityWorkbench rechecks the original workspace asset and pinned toolchain before starting a separate persistent preprocessing job. One **Process Data** click advances only one phase: ingest, validation, and preprocessing are distinct jobs and are never silently chained into one click.
+3. The pinned CPU/software FFmpeg path creates four files in the job's bounded staging folder:
+   - `proxy.mp4`: a playback/presentation-only MP4 using software MPEG-4 Part 2 video (`mpeg4`), `yuv420p`, aspect-ratio-preserving dimensions no larger than 1280×720, a 30 fps target, and stereo 48 kHz AAC audio. It is not an approved visual-model input.
+   - `audio.wav`: mono 16 kHz signed 16-bit little-endian PCM (`pcm_s16le`) analysis audio.
+   - `timestamp-map.json`: a versioned affine target-time map from the rebased proxy/audio timeline to the source presentation timeline.
+   - `preprocessing-manifest.json`: a privacy-bounded record of the source/upstream hashes, artifact metadata and hashes, contract/tool provenance, timeline observations/limitations, and the explicit **Not assessed** quality/applicability states. It contains no original path, source filename, raw tool output, transcript, behavioral feature, or score.
+4. VerityWorkbench probes and hashes the generated files, rechecks the source bytes, then atomically promotes the complete four-file bundle beneath the source asset as `Prepared/v1_<first-12-characters-of-contract-SHA-256>/`. The SQLite result stores exact SHA-256 hashes and byte lengths for all four artifacts, including the manifest. Existing immutable bundles are not overwritten.
+5. A successful profile shows **Media prepared — quality and applicability not assessed**. This is an engineering preprocessing result only; no transcription, feature extraction, face/voice assessment, training, inference, or scoring was performed.
+
+Version-pinned, CPU-only preprocessing improves reproducibility but does not promise bit-identical output across machines. Recorded artifact hashes are authoritative; a differing output is never silently substituted for an accepted immutable bundle.
+
+The timestamp map is intentionally modest: it rebases the selected streams to a common first-decoded presentation-time origin and records an affine target-time relationship. It is **not** exact source-frame lineage. Conversion to a 30 fps proxy may select, duplicate, or omit source frames; asynchronous audio resampling may pad, trim, or compensate for timestamp discontinuities; and microsecond/sample conversions are rounded. Later feature work must use a separately frozen and validated visual-input contract rather than assuming the playback proxy preserves every source frame.
+
+Select **Cancel Processing** to stop preprocessing. The app terminates the FFmpeg/ffprobe process tree, waits for exit, closes process and media handles, records no successful preprocessing result, promotes no partial bundle, and retains the unique `Processing` job folder for inspection or later verified cleanup. Promotion uses a durable journal around the short atomic directory move. On Refresh or restart, terminal/stale jobs reconcile a database-committed bundle, return an uncommitted bundle to its job when safe, or mark an inconsistent committed bundle as an integrity failure. Prepared results and readiness persist across app restarts.
 
 ## Persistent local metadata
 
@@ -226,7 +255,7 @@ Each profile's authoritative metadata database is stored inside its selected wor
 <profile-workspace>\Profile\profile.sqlite
 ```
 
-That SQLite database contains stable pseudonymous IDs, display names, normalized workspace/download roots, full local source-file paths, recording labels, training buckets, archive/order metadata, media hashes and workspace-relative asset paths, ingest/validation job status and progress, normalized successful validation metadata and tool provenance, bounded sanitized validation or integrity-failure states, readiness, and timestamps. It contains no video bytes, raw probe JSON, raw FFmpeg output, frames, extracted audio, transcripts, model features, or scores.
+That SQLite database contains stable pseudonymous IDs, display names, normalized workspace/download roots, full local source-file paths, recording labels, training buckets, archive/order metadata, source and derivative hashes, workspace-relative asset/artifact paths, ingest/validation/preprocessing job status and progress, normalized successful validation and preprocessing metadata/tool provenance, bounded sanitized failure states, readiness, and timestamps. It contains no video/audio bytes, raw probe JSON, raw FFmpeg output, frames, transcripts, model features, or scores.
 
 To find those user-selected workspaces after restart, the app keeps a minimal per-Windows-user locator catalog at:
 
@@ -258,6 +287,14 @@ Saving a valid draft creates only these fixed, human-readable top-level folders 
   Profile/
     profile.sqlite
   Media/
+    <media-asset>/
+      original.mp4
+      Prepared/
+        v1_<first-12-characters-of-contract-SHA-256>/
+          proxy.mp4
+          audio.wav
+          timestamp-map.json
+          preprocessing-manifest.json
   Downloads/
   Processing/
   Features/
@@ -303,7 +340,7 @@ For an eligible query, the initial analog display will be an uncalibrated direct
 - Processing is local. No account, hosted analysis service, or telemetry is required.
 - Source files are never modified.
 - Users are responsible for rights, consent, retention, label provenance, and authorized sharing.
-- A cancellation request stops the active ingest or media-validation operation, terminates any active FFmpeg/ffprobe process tree, closes file/process handles, writes no false success, promotes no partial artifact, and leaves the unique processing folder available for inspection or later deletion. Future workers must preserve this same boundary.
+- A cancellation request stops the active ingest, media-validation, or media-preprocessing operation, terminates any active FFmpeg/ffprobe process tree, closes file/process handles, writes no false success, promotes no partial artifact bundle, and leaves the unique processing folder available for inspection or later deletion. Future workers must preserve this same boundary.
 
 Every future export will produce exactly one encrypted `.vwpkg` file. Two planned types are:
 
@@ -320,7 +357,7 @@ VerityWorkbench/
     VerityWorkbench.App/       WinUI shell and Add/Edit Profile UI
     VerityWorkbench.Core/      Profile validation and workspace rules
     VerityWorkbench.Data/      Local SQLite profile persistence
-    VerityWorkbench.Media/     Bounded staging, hashing, promotion, probing, and full-decode validation
+    VerityWorkbench.Media/     Bounded ingest, validation, deterministic preprocessing, hashing, promotion, and recovery
   tests/
     VerityWorkbench.Core.Tests/
     VerityWorkbench.Data.Tests/
@@ -340,7 +377,7 @@ Additional Jobs, Inference, and Packaging projects will be added only when a tes
 | Windows App SDK | 2.4.0 | WinUI 3 desktop application |
 | Microsoft.Data.Sqlite | 10.0.10 | Persistent local profile metadata |
 | SQLitePCLRaw.lib.e_sqlite3 | 2.1.12 | SQLite native runtime |
-| BtbN FFmpeg/ffprobe | n8.1.2-44-g7c533d0f86-20260815 (`win64-lgpl-8.1`) | MP4 probing and selected-stream CPU decode validation |
+| BtbN FFmpeg/ffprobe | n8.1.2-44-g7c533d0f86-20260815 (`win64-lgpl-8.1`) | MP4 probing, full CPU decode validation, playback proxy creation, analysis-audio extraction, and timestamp mapping |
 | xUnit | 2.9.3 | Core unit tests |
 | xUnit Visual Studio runner | 3.1.4 | Test discovery and execution |
 | Microsoft.NET.Test.Sdk | 17.14.1 | .NET test host |

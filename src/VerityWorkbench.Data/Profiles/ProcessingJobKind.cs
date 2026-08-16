@@ -4,4 +4,5 @@ public enum ProcessingJobKind
 {
     LocalMediaIngest,
     MediaValidation,
+    MediaPreprocessing,
 }

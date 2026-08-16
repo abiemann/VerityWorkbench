@@ -45,9 +45,15 @@ public sealed class ProfileSummaryViewModel : INotifyPropertyChanged
 
     public string Readiness { get; }
 
-    public bool CanProcessData => Readiness is not "IngestingMedia" and not "ValidatingMedia" and not "MediaIntegrityFailed"
+    public bool CanProcessData => Readiness is not "IngestingMedia"
+        and not "ValidatingMedia"
+        and not "PreprocessingMedia"
+        and not "MediaIntegrityFailed"
         && (PendingMediaCount > 0
-            || Readiness is "MediaIngestedAwaitingProbe" or "MediaValidationFailed" or "MediaValidated");
+            || Readiness is "MediaIngestedAwaitingProbe"
+                or "MediaValidationFailed"
+                or "MediaValidated"
+                or "MediaPreprocessingFailed");
 
     public string Status => _liveStatus ?? Readiness switch
     {
@@ -55,7 +61,10 @@ public sealed class ProfileSummaryViewModel : INotifyPropertyChanged
         "MediaIngestedAwaitingProbe" => "Media registered — awaiting validation",
         "ValidatingMedia" => "Media validation in progress",
         "MediaValidationFailed" => "Media validation needs attention",
-        "MediaValidated" => "Media validated — awaiting feature extraction",
+        "MediaValidated" => "Media validated — awaiting preprocessing",
+        "PreprocessingMedia" => "Media preprocessing in progress",
+        "MediaPreprocessingFailed" => "Media preprocessing needs attention",
+        "MediaPrepared" => "Media prepared — quality and applicability not assessed",
         "MediaIntegrityFailed" => "Workspace media changed — repair required",
         _ => "Draft — not processed",
     };

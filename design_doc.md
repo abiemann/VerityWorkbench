@@ -1,6 +1,6 @@
 # VerityWorkbench: Person-Specific Multimodal Veracity Research Workbench
 
-**Project status:** Concept and research blueprint
+**Project status:** Active research prototype and forward-looking research blueprint
 
 **Research snapshot date:** August 15, 2026
 
@@ -13,6 +13,8 @@
 **Initial approved media inputs:** Explicitly selected local MP4 files or user-supplied direct HTTP(S) MP4 media URLs that are downloaded and finalized locally before processing
 
 **Working description:** A person-specific system for studying whether synchronized facial, vocal, and linguistic changes are associated with independently verified intentional deception under controlled, comparable conditions.
+
+**Current implementation snapshot:** Implementation Milestone 5 provides persistent local MP4 ingest, complete selected-stream validation, and deterministic preprocessing into a playback-only proxy, mono analysis WAV, affine target-time map, and privacy-bounded manifest. Media quality and model applicability remain `NotAssessed`; transcription, feature extraction, identity/authenticity assessment, training, inference, and scoring are not implemented. This implementation-slice numbering is distinct from the longer-term scientific delivery roadmap in Section 14.
 
 ## 1. Executive summary
 
@@ -694,13 +696,17 @@ After either entry path produces a finalized local artifact:
 1. Compute SHA-256 and use the hash as the durable media identity.
 2. Preserve the imported original without modification while the project remains authorized; content-addressed storage must still support consent withdrawal and verified deletion.
 3. Record the source type (`LocalFile` or `DirectHttpMedia`), a sanitized source reference, the user's rights/consent attestation, user-entered recording-date label, archive state, ffprobe stream metadata, and tool version.
-4. Detect variable frame rate, dropped frames, clipping, missing audio, and timestamp discontinuities.
-5. Create a canonical playback proxy if necessary.
-6. Create a mono analysis WAV while preserving a timestamp map to the source.
+4. Record bounded media observations without silently converting them into eligibility decisions. The implemented contract records variable-frame-rate and audio-summary observations while leaving quality/applicability `NotAssessed`; future declared quality gates may address dropped frames, clipping, missing audio, and timestamp discontinuities.
+5. Create a versioned local playback/presentation proxy. The implemented version-1 contract uses the pinned CPU/software FFmpeg path, MPEG-4 Part 2 video (`mpeg4`), `yuv420p`, aspect-ratio-preserving dimensions no larger than 1280×720, a 30 fps target, and stereo 48 kHz AAC. This proxy is not silently accepted as visual model input; a later visual-analysis pipeline requires its own frozen input/frame-sampling contract.
+6. Create a mono 16 kHz signed 16-bit little-endian PCM (`pcm_s16le`) analysis WAV while preserving a versioned timestamp map to the source presentation timeline.
 7. Cache artifacts by source hash plus pipeline-configuration hash.
 8. Record the decode path and hash generated proxy/audio outputs so reproducibility differences are visible.
 
-Both model training and T+1 analysis consume only these finalized, validated local artifacts. Remote content is never streamed directly into a feature extractor or model.
+Future model training and T+1 analysis consume only finalized, validated local artifacts through their own frozen input contracts. Remote content is never streamed directly into a feature extractor or model.
+
+The implemented timestamp map is an affine target-time mapping anchored at the minimum first-decoded presentation timestamp of the selected video/audio streams after rebasing. It is not exact source-frame lineage: conversion to the 30 fps playback proxy may select, duplicate, or omit source frames; asynchronous audio resampling may pad, trim, or compensate for timestamp discontinuities; and microsecond/sample conversions are rounded. The map supports synchronized presentation and later explicit alignment work, but it does not itself prove frame correspondence or model suitability.
+
+In the current application, ingest, validation, and preprocessing are separate persistent phases. One **Process Data** click advances at most one phase. A validated profile reports **Media validated — awaiting preprocessing**; successful preprocessing reports **Media prepared — quality and applicability not assessed**. These are engineering states, not scientific eligibility decisions.
 
 ### 8.5 Storage layout
 
@@ -714,9 +720,12 @@ The user chooses the profile workspace when adding the profile. The download-sta
   Media/
     <recording-label>_<safe-source-name>_<short-id>/
       original.mp4
-      proxy.mp4
-      audio.wav
-      media-manifest.json
+      Prepared/
+        v1_<first-12-characters-of-preprocessing-contract-sha256>/
+          proxy.mp4
+          audio.wav
+          timestamp-map.json
+          preprocessing-manifest.json
   Downloads/
     <download-date>_<safe-name>_<short-id>/
       media.part
@@ -753,7 +762,9 @@ The user chooses the profile workspace when adding the profile. The download-sta
 
 If the user chooses a download-staging root outside the workspace, the application creates the same well-named profile/download job boundary there. Names are for human navigation only and never become model features or durable identities.
 
-Every processing run is confined to one unique `Processing` job folder. Cancellation requests cooperative worker shutdown, terminates an unresponsive worker tree after a bounded grace period, disposes streams and child processes, closes every file handle, records `Cancelled`, and leaves the job folder intact and unlocked for later inspection or deletion. No incomplete feature set or candidate model is promoted. The UI provides **Open Folder** and **Delete Processing Data**, and deletion validates that the exact target is an inactive job folder beneath the selected profile workspace.
+Every processing run is confined to one unique `Processing` job folder. Cancellation requests cooperative worker shutdown, terminates an unresponsive worker tree after a bounded grace period, disposes streams and child processes, closes every file handle, records `Cancelled`, and leaves the job folder intact and unlocked for later inspection or deletion. No incomplete derivative bundle, feature set, or candidate model is promoted. The planned UI provides **Open Folder** and **Delete Processing Data**, and deletion validates that the exact target is an inactive job folder beneath the selected profile workspace.
+
+The current preprocessing implementation stages all four required files below the job, verifies and hashes them, rechecks the immutable source, and promotes the complete directory by one atomic move. A durable promotion journal bridges that filesystem move and the SQLite commit. Refresh/startup reconciliation verifies a database-committed bundle, returns an uncommitted bundle to its job when safe, or persists an integrity failure for an inconsistent committed bundle before stale-job recovery. An accepted `Prepared/v1_<contract-prefix>` bundle is immutable and is never silently overwritten.
 
 Archiving a training video is a logical metadata action: the artifact and audit history remain in place, but the video is excluded from future candidate models. Permanent deletion and consent withdrawal are separate operations. Withdrawal disables any active model derived from the withdrawn data and triggers the configured deletion workflow.
 
@@ -769,6 +780,8 @@ Each artifact manifest records:
 - training, calibration, and test session/capture-group IDs;
 - canonical BCP 47 model tag and compatible-tag allowlist/range, detector/ASR/tokenizer/raw-text provenance versions, language-confidence/coverage policy, and code-switching policy;
 - profile lineage, parent model version, compatibility contract, and promotion state where applicable.
+
+For the implemented preprocessing bundle, the database stores exact SHA-256 hashes and byte lengths for `proxy.mp4`, `audio.wav`, `timestamp-map.json`, and `preprocessing-manifest.json`. The preprocessing manifest records source/upstream hashes, normalized artifact metadata, preprocessing/tool/validation-contract provenance, timeline observations and limitations, and explicit `NotAssessed` media-quality and model-applicability states. It excludes original paths, source filenames, raw FFmpeg/ffprobe output, transcript text, behavioral features, and scores. Hashes can still be linkable and must be treated as private workspace metadata rather than anonymous data.
 
 Python-versus-C# inference parity must be tested before accepting an ONNX export. A destination import also verifies feature schema, preprocessing hash, ONNX opset/runtime support, and required worker/model versions before allowing queries.
 
@@ -944,6 +957,8 @@ When a package is attached through Edit Profile, its pseudonymous profile-lineag
 The main view and profile detail view show current stage, progress, elapsed time, learned ETA when available, input item, job folder, and any action required. Download jobs expose **Pause**, **Resume**, and **Discard Download** when safe resume is available.
 
 Cancelling a processing job stops the full worker tree, closes every stream and file handle, records the cancellation, and leaves its unique processing folder intact and unlocked. No partial artifact or model is promoted. The UI exposes **Open Folder** and **Delete Processing Data**, allowing the user to inspect or later remove the bounded job directory.
+
+In implementation Milestone 5, **Process Data** deliberately performs only the next eligible phase per click: local ingest, then MP4 validation, then deterministic preprocessing. Preprocessing progress and result state are persisted. Cancellation terminates the pinned FFmpeg/ffprobe process tree and records no false success; restart reconciliation resolves journaled promotion state before recovering stale jobs. A prepared profile remains explicitly **quality and applicability not assessed** until separately declared and validated gates exist.
 
 ### 10.5 Query Profile
 
@@ -1382,6 +1397,8 @@ Failure is an informative research result. It should cause the system to remain 
 - Recording date is user-entered display/sort metadata only and never a model feature or source of independence.
 - Downloads resume when HTTP range support and strong resource validation make continuation safe.
 - Processing cancellation stops workers, closes file handles, does not promote partial results, and leaves the bounded job folder available for inspection or deletion.
+- Deterministic preprocessing creates a local playback-only MPEG-4 Part 2/AAC proxy, mono 16 kHz PCM analysis WAV, affine target-time map, and privacy-bounded manifest in an immutable `Prepared/v1_<contract-prefix>` bundle; every artifact is hashed and journaled promotion is restart-reconciled.
+- Successful preprocessing leaves media quality and model applicability `NotAssessed`. It does not imply transcription, feature, identity, authenticity, language, training, or scoring readiness, and the playback proxy is not automatically a visual-model input.
 - Archived videos remain stored and audited but are excluded from future candidate models; permanent deletion and withdrawal are separate.
 - Query results use synchronized video and clickable transcript timestamps, with strict score/calibration language and abstention.
 - Non-English MP4s are supported through local multilingual ASR. The UI preserves the original-language transcript, user correction, and optional English translation as separate artifacts.

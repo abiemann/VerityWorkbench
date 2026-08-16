@@ -13,10 +13,27 @@
 - [x] On cancellation or operational failure, terminate the external process tree, close handles, write no successful result, and restore the profile's safe derived pre-job readiness.
 - [x] Persist a registered-media integrity-failure state that survives restart, blocks further processing, preserves immutable validation provenance, and can be excluded by archiving the affected training selection.
 - [ ] Add a journaled, no-deletion repair workflow that can replace a changed or missing registered media copy from an explicitly selected source.
-- [ ] Add declared media-quality and applicability thresholds for later feature extraction; passing decode alone is not model readiness.
-- [ ] Add canonical proxy creation, extracted audio, timestamp mapping, derivative hashing, and their cancellation/recovery journals.
 - [ ] Add inspection and verified cleanup controls for retained processing-job folders and future media derivatives.
 - [ ] Add automated integration fixtures for additional supported codecs, corrupt/truncated MP4s, ambiguous/default stream combinations, cancellation during long decode, timeout/output-limit enforcement, and post-decode mutation detection.
+
+## Milestone 5 deterministic media preprocessing
+
+- [x] Freeze and hash a versioned preprocessing contract tied to the pinned FFmpeg build and validated-media contract; require the same existing local FFmpeg/ffprobe installation and no additional dependency.
+- [x] Generate an immutable playback/presentation-only `proxy.mp4` using the CPU/software MPEG-4 Part 2 encoder, `yuv420p`, aspect-ratio-preserving dimensions no larger than 1280×720, a 30 fps target, and stereo 48 kHz AAC.
+- [x] Generate a mono 16 kHz signed 16-bit little-endian PCM `audio.wav` for later analysis work.
+- [x] Generate a versioned affine target-time `timestamp-map.json` that records the first-decoded source presentation-time origin and explicitly states that the map is not exact source-frame lineage, 30 fps conversion can select/duplicate/omit frames, asynchronous resampling can pad/trim/compensate discontinuities, and time/sample conversion is rounded.
+- [x] Generate a privacy-bounded `preprocessing-manifest.json` without source paths, filenames, raw tool output, transcripts, features, or scores; persist exact SHA-256 hashes and byte lengths for the proxy, WAV, timestamp map, and manifest.
+- [x] Stage the complete four-file bundle inside one bounded preprocessing job and atomically promote it to `Media/<asset>/Prepared/v1_<first-12-contract-hash>/` without overwriting an existing immutable contract bundle.
+- [x] Persist preprocessing jobs, immutable successful results, artifact/tool provenance, per-asset retryable failures, and profile readiness across restart.
+- [x] Keep ingest, validation, and preprocessing as distinct phases: one **Process Data** click advances at most one phase.
+- [x] On cancellation or operational failure, terminate the external process tree, close handles, write no false success, promote no partial bundle, retain the processing folder, and restore safe derived readiness.
+- [x] Reconcile preprocessing promotion journals on Refresh/startup before stale-job recovery; verify committed bundles, return uncommitted bundles to their job when safe, and persist integrity failure for inconsistent committed artifacts.
+- [x] Record media quality and model applicability as **Not assessed**; do not infer feature, training, identity, authenticity, language, or behavioral readiness from successful preprocessing.
+- [x] Keep the playback proxy outside the approved visual-model input contract and exclude every media derivative from both query-only and trainable `.vwpkg` exports.
+- [ ] Add declared, prospectively justified media-quality and model-applicability thresholds before feature extraction can treat prepared media as eligible.
+- [ ] Add a separately frozen visual-analysis input/frame-sampling contract; do not silently use the playback proxy as model input.
+- [ ] Before introducing preprocessing contract v2, add version-dispatched verification/migration so an intact historical v1 bundle is reported as compatible or reprocessing-needed, never as damaged merely because the current contract changed.
+- [ ] Add automated long-running cancellation, forced-restart journal, tampered-committed-bundle, and representative real-media fixtures beyond the current generated installed-tool integration coverage.
 
 ## Multilingual transcription and model-language gate
 

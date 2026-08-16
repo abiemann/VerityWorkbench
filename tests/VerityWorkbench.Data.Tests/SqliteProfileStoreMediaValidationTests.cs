@@ -20,7 +20,7 @@ public sealed class SqliteProfileStoreMediaValidationTests
         var store = new SqliteProfileStore(database.DatabasePath, createIfMissing: false);
         await store.InitializeAsync();
 
-        Assert.Equal(4L, await ReadSchemaVersionAsync(database.DatabasePath));
+        Assert.Equal(5L, await ReadSchemaVersionAsync(database.DatabasePath));
         Assert.True(await TableHasColumnAsync(database.DatabasePath, "media_assets", "probe_failure"));
         Assert.True(await TableExistsAsync(database.DatabasePath, "media_validation_results"));
         Assert.True(await TableExistsAsync(database.DatabasePath, "media_validation_job_assets"));

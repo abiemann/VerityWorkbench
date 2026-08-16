@@ -6,11 +6,12 @@ namespace VerityWorkbench.Data.Profiles;
 
 public sealed class SqliteProfileStore
 {
-    private const int SchemaVersion = 4;
+    private const int SchemaVersion = 5;
     private const int MaximumStoredErrorLength = 2_048;
     private const int MaximumProbeTextLength = 4_096;
     private const string MediaIntegrityFailureReason =
-        "Registered media failed integrity verification; exclude or repair it before validation.";
+        "Registered original media or its prepared derivative bundle failed integrity verification; " +
+        "exclude or repair it before processing.";
 
     private const string CreateVersion1SchemaSql = """
         CREATE TABLE IF NOT EXISTS profiles (
@@ -165,6 +166,93 @@ public sealed class SqliteProfileStore
         PRAGMA user_version = 4;
         """;
 
+    private const string MigrateVersion4ToVersion5Sql = """
+        ALTER TABLE media_assets
+            ADD COLUMN preprocessing_failure TEXT NULL CHECK (
+                preprocessing_failure IS NULL OR length(preprocessing_failure) <= 2048);
+
+        CREATE TABLE media_preprocessing_results (
+            media_asset_id TEXT NOT NULL PRIMARY KEY,
+            source_sha256 TEXT NOT NULL CHECK (length(source_sha256) = 64),
+            source_byte_length INTEGER NOT NULL CHECK (source_byte_length > 0),
+            preprocessing_contract_version TEXT NOT NULL CHECK (
+                length(preprocessing_contract_version) BETWEEN 1 AND 4096),
+            preprocessing_contract_sha256 TEXT NOT NULL CHECK (
+                length(preprocessing_contract_sha256) = 64),
+            proxy_workspace_relative_path TEXT NOT NULL CHECK (
+                length(proxy_workspace_relative_path) BETWEEN 1 AND 1024),
+            proxy_sha256 TEXT NOT NULL CHECK (length(proxy_sha256) = 64),
+            proxy_byte_length INTEGER NOT NULL CHECK (proxy_byte_length > 0),
+            proxy_container_format TEXT NOT NULL CHECK (
+                length(proxy_container_format) BETWEEN 1 AND 4096),
+            proxy_video_codec TEXT NOT NULL CHECK (length(proxy_video_codec) BETWEEN 1 AND 4096),
+            proxy_pixel_format TEXT NOT NULL CHECK (length(proxy_pixel_format) BETWEEN 1 AND 4096),
+            proxy_width INTEGER NOT NULL CHECK (proxy_width > 0),
+            proxy_height INTEGER NOT NULL CHECK (proxy_height > 0),
+            proxy_frame_rate_numerator INTEGER NOT NULL CHECK (proxy_frame_rate_numerator > 0),
+            proxy_frame_rate_denominator INTEGER NOT NULL CHECK (proxy_frame_rate_denominator > 0),
+            proxy_audio_codec TEXT NOT NULL CHECK (length(proxy_audio_codec) BETWEEN 1 AND 4096),
+            proxy_audio_sample_rate_hz INTEGER NOT NULL CHECK (proxy_audio_sample_rate_hz > 0),
+            proxy_audio_channel_count INTEGER NOT NULL CHECK (proxy_audio_channel_count > 0),
+            proxy_duration_microseconds INTEGER NOT NULL CHECK (proxy_duration_microseconds > 0),
+            analysis_audio_workspace_relative_path TEXT NOT NULL CHECK (
+                length(analysis_audio_workspace_relative_path) BETWEEN 1 AND 1024),
+            analysis_audio_sha256 TEXT NOT NULL CHECK (length(analysis_audio_sha256) = 64),
+            analysis_audio_byte_length INTEGER NOT NULL CHECK (analysis_audio_byte_length > 0),
+            analysis_audio_codec TEXT NOT NULL CHECK (
+                length(analysis_audio_codec) BETWEEN 1 AND 4096),
+            analysis_audio_sample_rate_hz INTEGER NOT NULL CHECK (analysis_audio_sample_rate_hz > 0),
+            analysis_audio_channel_count INTEGER NOT NULL CHECK (analysis_audio_channel_count > 0),
+            analysis_audio_sample_count INTEGER NOT NULL CHECK (analysis_audio_sample_count > 0),
+            analysis_audio_duration_microseconds INTEGER NOT NULL CHECK (
+                analysis_audio_duration_microseconds > 0),
+            timestamp_map_workspace_relative_path TEXT NOT NULL CHECK (
+                length(timestamp_map_workspace_relative_path) BETWEEN 1 AND 1024),
+            timestamp_map_sha256 TEXT NOT NULL CHECK (length(timestamp_map_sha256) = 64),
+            timestamp_map_byte_length INTEGER NOT NULL CHECK (timestamp_map_byte_length > 0),
+            manifest_workspace_relative_path TEXT NOT NULL CHECK (
+                length(manifest_workspace_relative_path) BETWEEN 1 AND 1024),
+            manifest_sha256 TEXT NOT NULL CHECK (length(manifest_sha256) = 64),
+            manifest_byte_length INTEGER NOT NULL CHECK (manifest_byte_length > 0),
+            source_timeline_origin_microseconds INTEGER NOT NULL,
+            mapped_duration_microseconds INTEGER NOT NULL CHECK (mapped_duration_microseconds > 0),
+            video_map_entry_count INTEGER NOT NULL CHECK (video_map_entry_count > 0),
+            audio_map_segment_count INTEGER NOT NULL CHECK (audio_map_segment_count > 0),
+            ffmpeg_version TEXT NOT NULL CHECK (length(ffmpeg_version) BETWEEN 1 AND 4096),
+            ffmpeg_compiler_identifier TEXT NOT NULL CHECK (
+                length(ffmpeg_compiler_identifier) BETWEEN 1 AND 4096),
+            ffmpeg_configuration_sha256 TEXT NOT NULL CHECK (
+                length(ffmpeg_configuration_sha256) = 64),
+            ffmpeg_executable_sha256 TEXT NOT NULL CHECK (length(ffmpeg_executable_sha256) = 64),
+            media_validation_contract_sha256 TEXT NOT NULL CHECK (
+                length(media_validation_contract_sha256) = 64),
+            media_quality_state TEXT NOT NULL CHECK (media_quality_state = 'NotAssessed'),
+            model_applicability_state TEXT NOT NULL CHECK (
+                model_applicability_state = 'NotAssessed'),
+            preprocessed_utc TEXT NOT NULL,
+            FOREIGN KEY (media_asset_id) REFERENCES media_assets(id) ON DELETE CASCADE
+        );
+
+        CREATE TRIGGER media_preprocessing_results_immutable_update
+        BEFORE UPDATE ON media_preprocessing_results
+        BEGIN
+            SELECT RAISE(ABORT, 'Successful media preprocessing results are immutable.');
+        END;
+
+        CREATE TABLE media_preprocessing_job_assets (
+            job_id TEXT NOT NULL,
+            media_asset_id TEXT NOT NULL,
+            PRIMARY KEY (job_id, media_asset_id),
+            FOREIGN KEY (job_id) REFERENCES processing_jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (media_asset_id) REFERENCES media_assets(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX ix_media_preprocessing_job_assets_asset
+            ON media_preprocessing_job_assets(media_asset_id, job_id);
+
+        PRAGMA user_version = 5;
+        """;
+
     private readonly string _connectionString;
     private readonly SemaphoreSlim _initializationGate = new(1, 1);
     private volatile bool _initialized;
@@ -257,6 +345,17 @@ public sealed class SqliteProfileStore
                         connection,
                         transaction,
                         MigrateVersion3ToVersion4Sql,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                version = 4;
+            }
+
+            if (version < 5)
+            {
+                await ApplyMigrationStepAsync(
+                        connection,
+                        transaction,
+                        MigrateVersion4ToVersion5Sql,
                         cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -779,6 +878,7 @@ public sealed class SqliteProfileStore
                     first.ByteLength,
                     MediaAssetState.AwaitingProbe,
                     null,
+                    null,
                     now,
                     now);
                 await InsertMediaAssetAsync(connection, transaction, asset, cancellationToken)
@@ -881,7 +981,7 @@ public sealed class SqliteProfileStore
         }
 
         var pendingAssets = activeAssets
-            .Where(asset => asset.State != MediaAssetState.Validated)
+            .Where(asset => asset.State is MediaAssetState.AwaitingProbe or MediaAssetState.ValidationFailed)
             .ToArray();
         if (pendingAssets.Length == 0)
         {
@@ -1109,6 +1209,325 @@ public sealed class SqliteProfileStore
         return persistedAssets;
     }
 
+    public async Task<StoredProcessingJob> StartMediaPreprocessingJobAsync(
+        Guid profileId,
+        DateTimeOffset expectedUpdatedAtUtc,
+        Guid jobId,
+        string workspaceRelativePath,
+        DateTimeOffset startedAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateRequiredId(profileId, nameof(profileId));
+        ValidateRequiredId(jobId, nameof(jobId));
+        var normalizedJobPath = NormalizeBoundedWorkspaceRelativePath(
+            workspaceRelativePath,
+            "Processing",
+            nameof(workspaceRelativePath));
+        if (startedAtUtc <= expectedUpdatedAtUtc)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(startedAtUtc),
+                "The job timestamp must be later than the expected profile timestamp.");
+        }
+
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = await OpenConfiguredConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        using var transaction = connection.BeginTransaction(deferred: false);
+        if (await HasActiveJobAsync(connection, transaction, profileId, cancellationToken)
+            .ConfigureAwait(false))
+        {
+            throw new ProfileProcessingActiveException(profileId);
+        }
+
+        if (await HasUnlinkedActiveTrainingVideosAsync(
+                connection,
+                transaction,
+                profileId,
+                cancellationToken)
+            .ConfigureAwait(false))
+        {
+            throw new InvalidOperationException(
+                $"Profile '{profileId}' has active training videos that have not been ingested.");
+        }
+
+        var activeAssets = await ReadActiveMediaAssetsAsync(
+                connection,
+                transaction,
+                profileId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (activeAssets.Any(asset => asset.State == MediaAssetState.IntegrityFailed))
+        {
+            throw new InvalidOperationException(
+                $"Profile '{profileId}' has active media that failed integrity verification.");
+        }
+
+        if (activeAssets.Any(asset => asset.State is MediaAssetState.AwaitingProbe or MediaAssetState.ValidationFailed))
+        {
+            throw new InvalidOperationException(
+                $"Profile '{profileId}' has active media that has not passed validation.");
+        }
+
+        foreach (var asset in activeAssets)
+        {
+            if (!await MediaValidationResultExistsAsync(
+                    connection,
+                    transaction,
+                    asset.Id,
+                    cancellationToken)
+                .ConfigureAwait(false))
+            {
+                throw new InvalidDataException(
+                    $"Media asset '{asset.Id}' has no successful validation result.");
+            }
+
+            var hasPreprocessingResult = await MediaPreprocessingResultExistsAsync(
+                    connection,
+                    transaction,
+                    asset.Id,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if ((asset.State == MediaAssetState.Prepared) != hasPreprocessingResult)
+            {
+                throw new InvalidDataException(
+                    $"Media asset '{asset.Id}' has inconsistent preprocessing state.");
+            }
+        }
+
+        var pendingAssets = activeAssets
+            .Where(asset => asset.State is MediaAssetState.Validated or MediaAssetState.PreprocessingFailed)
+            .ToArray();
+        if (pendingAssets.Length == 0)
+        {
+            throw new InvalidOperationException(
+                $"Profile '{profileId}' has no active media assets requiring preprocessing.");
+        }
+
+        long totalBytes;
+        try
+        {
+            totalBytes = pendingAssets.Aggregate(0L, (total, asset) => checked(total + asset.ByteLength));
+        }
+        catch (OverflowException)
+        {
+            throw new InvalidDataException($"Profile '{profileId}' has an invalid active-media byte total.");
+        }
+
+        var timestamp = FormatTimestamp(startedAtUtc);
+        await using (var updateProfile = connection.CreateCommand())
+        {
+            updateProfile.Transaction = transaction;
+            updateProfile.CommandText = """
+                UPDATE profiles
+                SET readiness = $readiness,
+                    updated_utc = $updatedUtc
+                WHERE id = $profileId
+                  AND updated_utc = $expectedUpdatedUtc;
+                """;
+            updateProfile.Parameters.AddWithValue(
+                "$readiness",
+                ProfileReadiness.PreprocessingMedia.ToString());
+            updateProfile.Parameters.AddWithValue("$updatedUtc", timestamp);
+            updateProfile.Parameters.AddWithValue("$profileId", profileId.ToString("D"));
+            updateProfile.Parameters.AddWithValue(
+                "$expectedUpdatedUtc",
+                FormatTimestamp(expectedUpdatedAtUtc));
+            var affected = await updateProfile.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            if (affected == 0)
+            {
+                if (!await ProfileExistsAsync(connection, transaction, profileId, cancellationToken)
+                    .ConfigureAwait(false))
+                {
+                    throw new KeyNotFoundException($"Profile '{profileId}' was not found.");
+                }
+
+                throw new ProfileConcurrencyConflictException(profileId, expectedUpdatedAtUtc);
+            }
+        }
+
+        var job = new StoredProcessingJob(
+            jobId,
+            profileId,
+            ProcessingJobKind.MediaPreprocessing,
+            ProcessingJobState.Queued,
+            0,
+            pendingAssets.Length,
+            0,
+            totalBytes,
+            normalizedJobPath,
+            null,
+            startedAtUtc.ToUniversalTime(),
+            startedAtUtc.ToUniversalTime());
+        await InsertProcessingJobAsync(connection, transaction, job, cancellationToken)
+            .ConfigureAwait(false);
+        await InsertMediaPreprocessingJobAssetsAsync(
+                connection,
+                transaction,
+                job.Id,
+                pendingAssets.Select(asset => asset.Id),
+                cancellationToken)
+            .ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return job;
+    }
+
+    public async Task<IReadOnlyList<StoredMediaAsset>> CompleteMediaPreprocessingJobAsync(
+        Guid jobId,
+        IReadOnlyList<MediaPreprocessingRegistration> registrations,
+        DateTimeOffset completedAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateRequiredId(jobId, nameof(jobId));
+        ArgumentNullException.ThrowIfNull(registrations);
+        var normalizedRegistrations = registrations
+            .Select(registration => registration with
+            {
+                FailureMessage = SanitizePreprocessingFailure(registration.FailureMessage),
+            })
+            .ToArray();
+        foreach (var registration in normalizedRegistrations)
+        {
+            ValidateMediaPreprocessingRegistration(registration);
+        }
+
+        if (normalizedRegistrations.Select(registration => registration.MediaAssetId).Distinct().Count() !=
+            normalizedRegistrations.Length)
+        {
+            throw new ArgumentException(
+                "A media asset may appear only once in a preprocessing batch.",
+                nameof(registrations));
+        }
+
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = await OpenConfiguredConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        using var transaction = connection.BeginTransaction(deferred: false);
+        var job = await ReadProcessingJobAsync(connection, transaction, jobId, cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Processing job '{jobId}' was not found.");
+        if (job.Kind != ProcessingJobKind.MediaPreprocessing ||
+            job.State is not ProcessingJobState.Queued and not ProcessingJobState.Running)
+        {
+            throw new InvalidOperationException(
+                $"Processing job '{jobId}' is not an active media-preprocessing job.");
+        }
+
+        ValidateTimestampNotBefore(completedAtUtc, job.UpdatedAtUtc, nameof(completedAtUtc));
+        var expectedAssetIds = await ReadMediaPreprocessingJobAssetIdsAsync(
+                connection,
+                transaction,
+                job.Id,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var suppliedAssetIds = normalizedRegistrations
+            .Select(registration => registration.MediaAssetId)
+            .ToHashSet();
+        if (expectedAssetIds.Count != job.TotalItemCount)
+        {
+            throw new InvalidDataException(
+                $"Media-preprocessing job '{job.Id}' has an inconsistent asset snapshot.");
+        }
+
+        if (expectedAssetIds.Count != normalizedRegistrations.Length ||
+            !expectedAssetIds.All(suppliedAssetIds.Contains))
+        {
+            throw new ArgumentException(
+                "The preprocessing batch must contain exactly the media assets snapshotted by the job.",
+                nameof(registrations));
+        }
+
+        var persistedAssets = new List<StoredMediaAsset>(normalizedRegistrations.Length);
+        foreach (var registration in normalizedRegistrations)
+        {
+            var asset = await ReadMediaAssetByIdAsync(
+                    connection,
+                    transaction,
+                    registration.MediaAssetId,
+                    cancellationToken)
+                .ConfigureAwait(false)
+                ?? throw new KeyNotFoundException($"Media asset '{registration.MediaAssetId}' was not found.");
+            if (asset.ProfileId != job.ProfileId)
+            {
+                throw new InvalidOperationException(
+                    $"Media asset '{asset.Id}' does not belong to preprocessing job '{job.Id}'.");
+            }
+
+            if (asset.State is not MediaAssetState.Validated and not MediaAssetState.PreprocessingFailed ||
+                await MediaPreprocessingResultExistsAsync(
+                        connection,
+                        transaction,
+                        asset.Id,
+                        cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                throw new MediaPreprocessingConflictException(asset.Id);
+            }
+
+            if (registration.Result is not null)
+            {
+                if (registration.Result.PreprocessedAtUtc < job.CreatedAtUtc ||
+                    registration.Result.PreprocessedAtUtc > completedAtUtc)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(registrations),
+                        "A preprocessing result timestamp must fall within its processing job.");
+                }
+
+                ValidateMediaPreprocessingResultForAsset(registration.Result, asset);
+                await InsertMediaPreprocessingResultAsync(
+                        connection,
+                        transaction,
+                        registration.Result,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            await SetMediaAssetPreprocessingAsync(
+                    connection,
+                    transaction,
+                    asset.Id,
+                    registration.State,
+                    registration.FailureMessage,
+                    completedAtUtc,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            persistedAssets.Add(asset with
+            {
+                State = registration.State,
+                ValidationFailure = null,
+                PreprocessingFailure = registration.FailureMessage,
+                UpdatedAtUtc = completedAtUtc.ToUniversalTime(),
+            });
+        }
+
+        await SetJobTerminalAsync(
+                connection,
+                transaction,
+                job,
+                ProcessingJobState.Completed,
+                error: null,
+                completedAtUtc,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var readiness = await DetermineMediaReadinessAsync(
+                connection,
+                transaction,
+                job.ProfileId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        await SetProfileReadinessAsync(
+                connection,
+                transaction,
+                job.ProfileId,
+                readiness,
+                completedAtUtc,
+                cancellationToken)
+            .ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return persistedAssets;
+    }
+
     public async Task<IReadOnlyList<StoredMediaAsset>> MarkMediaAssetsIntegrityFailedAsync(
         Guid profileId,
         DateTimeOffset expectedUpdatedAtUtc,
@@ -1225,6 +1644,7 @@ public sealed class SqliteProfileStore
         {
             State = MediaAssetState.IntegrityFailed,
             ValidationFailure = MediaIntegrityFailureReason,
+            PreprocessingFailure = null,
             UpdatedAtUtc = detectedAt,
         }).ToArray();
     }
@@ -1261,6 +1681,8 @@ public sealed class SqliteProfileStore
         var sanitizedError = terminalState == ProcessingJobState.Failed
             ? job.Kind == ProcessingJobKind.MediaValidation
                 ? SanitizeValidationFailure(error)
+                : job.Kind == ProcessingJobKind.MediaPreprocessing
+                    ? SanitizePreprocessingFailure(error)
                 : SanitizeError(error)
             : null;
 
@@ -1332,6 +1754,46 @@ public sealed class SqliteProfileStore
         await using var connection = await OpenConfiguredConnectionAsync(cancellationToken)
             .ConfigureAwait(false);
         return await ReadMediaValidationResultsAsync(connection, profileId, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<StoredMediaAsset>> GetMediaAssetsForPreprocessingJobAsync(
+        Guid jobId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateRequiredId(jobId, nameof(jobId));
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = await OpenConfiguredConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return await ReadMediaAssetsForPreprocessingJobAsync(connection, jobId, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<StoredMediaPreprocessingResult?> GetMediaPreprocessingResultAsync(
+        Guid mediaAssetId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateRequiredId(mediaAssetId, nameof(mediaAssetId));
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = await OpenConfiguredConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return await ReadMediaPreprocessingResultAsync(
+                connection,
+                transaction: null,
+                mediaAssetId,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<StoredMediaPreprocessingResult>> GetMediaPreprocessingResultsAsync(
+        Guid profileId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateRequiredId(profileId, nameof(profileId));
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = await OpenConfiguredConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return await ReadMediaPreprocessingResultsAsync(connection, profileId, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -1734,6 +2196,7 @@ public sealed class SqliteProfileStore
                 asset.byte_length,
                 asset.state,
                 asset.probe_failure,
+                asset.preprocessing_failure,
                 asset.created_utc,
                 asset.updated_utc
             FROM training_videos AS video
@@ -1814,9 +2277,90 @@ public sealed class SqliteProfileStore
                 asset.byte_length,
                 asset.state,
                 asset.probe_failure,
+                asset.preprocessing_failure,
                 asset.created_utc,
                 asset.updated_utc
             FROM media_validation_job_assets AS item
+            INNER JOIN media_assets AS asset ON asset.id = item.media_asset_id
+            WHERE item.job_id = $jobId
+            ORDER BY asset.created_utc, asset.id;
+            """;
+        command.Parameters.AddWithValue("$jobId", jobId.ToString("D"));
+        var assets = new List<StoredMediaAsset>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            assets.Add(MapMediaAsset(reader));
+        }
+
+        return assets;
+    }
+
+    private static async Task InsertMediaPreprocessingJobAssetsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid jobId,
+        IEnumerable<Guid> mediaAssetIds,
+        CancellationToken cancellationToken)
+    {
+        foreach (var mediaAssetId in mediaAssetIds)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO media_preprocessing_job_assets (job_id, media_asset_id)
+                VALUES ($jobId, $mediaAssetId);
+                """;
+            command.Parameters.AddWithValue("$jobId", jobId.ToString("D"));
+            command.Parameters.AddWithValue("$mediaAssetId", mediaAssetId.ToString("D"));
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<HashSet<Guid>> ReadMediaPreprocessingJobAssetIdsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid jobId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT media_asset_id
+            FROM media_preprocessing_job_assets
+            WHERE job_id = $jobId
+            ORDER BY media_asset_id;
+            """;
+        command.Parameters.AddWithValue("$jobId", jobId.ToString("D"));
+        var assetIds = new HashSet<Guid>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            assetIds.Add(Guid.Parse(reader.GetString(0)));
+        }
+
+        return assetIds;
+    }
+
+    private static async Task<IReadOnlyList<StoredMediaAsset>> ReadMediaAssetsForPreprocessingJobAsync(
+        SqliteConnection connection,
+        Guid jobId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                asset.id,
+                asset.profile_id,
+                asset.sha256,
+                asset.workspace_relative_path,
+                asset.byte_length,
+                asset.state,
+                asset.probe_failure,
+                asset.preprocessing_failure,
+                asset.created_utc,
+                asset.updated_utc
+            FROM media_preprocessing_job_assets AS item
             INNER JOIN media_assets AS asset ON asset.id = item.media_asset_id
             WHERE item.job_id = $jobId
             ORDER BY asset.created_utc, asset.id;
@@ -1842,7 +2386,7 @@ public sealed class SqliteProfileStore
         command.Transaction = transaction;
         command.CommandText = """
             SELECT id, profile_id, sha256, workspace_relative_path, byte_length, state,
-                   probe_failure, created_utc, updated_utc
+                   probe_failure, preprocessing_failure, created_utc, updated_utc
             FROM media_assets
             WHERE id = $id;
             """;
@@ -1872,6 +2416,25 @@ public sealed class SqliteProfileStore
             CultureInfo.InvariantCulture) != 0;
     }
 
+    private static async Task<bool> MediaPreprocessingResultExistsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid mediaAssetId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT COUNT(*)
+            FROM media_preprocessing_results
+            WHERE media_asset_id = $mediaAssetId;
+            """;
+        command.Parameters.AddWithValue("$mediaAssetId", mediaAssetId.ToString("D"));
+        return Convert.ToInt64(
+            await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
+            CultureInfo.InvariantCulture) != 0;
+    }
+
     private static async Task SetMediaAssetValidationAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -1887,6 +2450,7 @@ public sealed class SqliteProfileStore
             UPDATE media_assets
             SET state = $state,
                 probe_failure = $probeFailure,
+                preprocessing_failure = NULL,
                 updated_utc = $updatedUtc
             WHERE id = $id
               AND state IN ('AwaitingProbe', 'ValidationFailed');
@@ -1916,6 +2480,7 @@ public sealed class SqliteProfileStore
             UPDATE media_assets
             SET state = $state,
                 probe_failure = $probeFailure,
+                preprocessing_failure = NULL,
                 updated_utc = $updatedUtc
             WHERE id = $id;
             """;
@@ -1926,6 +2491,38 @@ public sealed class SqliteProfileStore
         if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
         {
             throw new KeyNotFoundException($"Media asset '{mediaAssetId}' was not found.");
+        }
+    }
+
+    private static async Task SetMediaAssetPreprocessingAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid mediaAssetId,
+        MediaAssetState state,
+        string? failure,
+        DateTimeOffset timestamp,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE media_assets
+            SET state = $state,
+                probe_failure = NULL,
+                preprocessing_failure = $preprocessingFailure,
+                updated_utc = $updatedUtc
+            WHERE id = $id
+              AND state IN ('Validated', 'PreprocessingFailed');
+            """;
+        command.Parameters.AddWithValue("$state", state.ToString());
+        command.Parameters.AddWithValue(
+            "$preprocessingFailure",
+            (object?)failure ?? DBNull.Value);
+        command.Parameters.AddWithValue("$updatedUtc", FormatTimestamp(timestamp));
+        command.Parameters.AddWithValue("$id", mediaAssetId.ToString("D"));
+        if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
+        {
+            throw new MediaPreprocessingConflictException(mediaAssetId);
         }
     }
 
@@ -2175,6 +2772,407 @@ public sealed class SqliteProfileStore
         return result;
     }
 
+    private static async Task InsertMediaPreprocessingResultAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        StoredMediaPreprocessingResult result,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO media_preprocessing_results (
+                media_asset_id,
+                source_sha256,
+                source_byte_length,
+                preprocessing_contract_version,
+                preprocessing_contract_sha256,
+                proxy_workspace_relative_path,
+                proxy_sha256,
+                proxy_byte_length,
+                proxy_container_format,
+                proxy_video_codec,
+                proxy_pixel_format,
+                proxy_width,
+                proxy_height,
+                proxy_frame_rate_numerator,
+                proxy_frame_rate_denominator,
+                proxy_audio_codec,
+                proxy_audio_sample_rate_hz,
+                proxy_audio_channel_count,
+                proxy_duration_microseconds,
+                analysis_audio_workspace_relative_path,
+                analysis_audio_sha256,
+                analysis_audio_byte_length,
+                analysis_audio_codec,
+                analysis_audio_sample_rate_hz,
+                analysis_audio_channel_count,
+                analysis_audio_sample_count,
+                analysis_audio_duration_microseconds,
+                timestamp_map_workspace_relative_path,
+                timestamp_map_sha256,
+                timestamp_map_byte_length,
+                manifest_workspace_relative_path,
+                manifest_sha256,
+                manifest_byte_length,
+                source_timeline_origin_microseconds,
+                mapped_duration_microseconds,
+                video_map_entry_count,
+                audio_map_segment_count,
+                ffmpeg_version,
+                ffmpeg_compiler_identifier,
+                ffmpeg_configuration_sha256,
+                ffmpeg_executable_sha256,
+                media_validation_contract_sha256,
+                media_quality_state,
+                model_applicability_state,
+                preprocessed_utc)
+            VALUES (
+                $mediaAssetId,
+                $sourceSha256,
+                $sourceByteLength,
+                $preprocessingContractVersion,
+                $preprocessingContractSha256,
+                $proxyWorkspaceRelativePath,
+                $proxySha256,
+                $proxyByteLength,
+                $proxyContainerFormat,
+                $proxyVideoCodec,
+                $proxyPixelFormat,
+                $proxyWidth,
+                $proxyHeight,
+                $proxyFrameRateNumerator,
+                $proxyFrameRateDenominator,
+                $proxyAudioCodec,
+                $proxyAudioSampleRateHz,
+                $proxyAudioChannelCount,
+                $proxyDurationMicroseconds,
+                $analysisAudioWorkspaceRelativePath,
+                $analysisAudioSha256,
+                $analysisAudioByteLength,
+                $analysisAudioCodec,
+                $analysisAudioSampleRateHz,
+                $analysisAudioChannelCount,
+                $analysisAudioSampleCount,
+                $analysisAudioDurationMicroseconds,
+                $timestampMapWorkspaceRelativePath,
+                $timestampMapSha256,
+                $timestampMapByteLength,
+                $manifestWorkspaceRelativePath,
+                $manifestSha256,
+                $manifestByteLength,
+                $sourceTimelineOriginMicroseconds,
+                $mappedDurationMicroseconds,
+                $videoMapEntryCount,
+                $audioMapSegmentCount,
+                $ffmpegVersion,
+                $ffmpegCompilerIdentifier,
+                $ffmpegConfigurationSha256,
+                $ffmpegExecutableSha256,
+                $mediaValidationContractSha256,
+                $mediaQualityState,
+                $modelApplicabilityState,
+                $preprocessedUtc);
+            """;
+        command.Parameters.AddWithValue("$mediaAssetId", result.MediaAssetId.ToString("D"));
+        command.Parameters.AddWithValue("$sourceSha256", result.SourceSha256);
+        command.Parameters.AddWithValue("$sourceByteLength", result.SourceByteLength);
+        command.Parameters.AddWithValue(
+            "$preprocessingContractVersion",
+            result.PreprocessingContractVersion);
+        command.Parameters.AddWithValue(
+            "$preprocessingContractSha256",
+            result.PreprocessingContractSha256);
+        command.Parameters.AddWithValue("$proxyWorkspaceRelativePath", result.ProxyWorkspaceRelativePath);
+        command.Parameters.AddWithValue("$proxySha256", result.ProxySha256);
+        command.Parameters.AddWithValue("$proxyByteLength", result.ProxyByteLength);
+        command.Parameters.AddWithValue("$proxyContainerFormat", result.ProxyContainerFormat);
+        command.Parameters.AddWithValue("$proxyVideoCodec", result.ProxyVideoCodec);
+        command.Parameters.AddWithValue("$proxyPixelFormat", result.ProxyPixelFormat);
+        command.Parameters.AddWithValue("$proxyWidth", result.ProxyWidth);
+        command.Parameters.AddWithValue("$proxyHeight", result.ProxyHeight);
+        command.Parameters.AddWithValue("$proxyFrameRateNumerator", result.ProxyFrameRateNumerator);
+        command.Parameters.AddWithValue("$proxyFrameRateDenominator", result.ProxyFrameRateDenominator);
+        command.Parameters.AddWithValue("$proxyAudioCodec", result.ProxyAudioCodec);
+        command.Parameters.AddWithValue("$proxyAudioSampleRateHz", result.ProxyAudioSampleRateHz);
+        command.Parameters.AddWithValue("$proxyAudioChannelCount", result.ProxyAudioChannelCount);
+        command.Parameters.AddWithValue("$proxyDurationMicroseconds", result.ProxyDurationMicroseconds);
+        command.Parameters.AddWithValue(
+            "$analysisAudioWorkspaceRelativePath",
+            result.AnalysisAudioWorkspaceRelativePath);
+        command.Parameters.AddWithValue("$analysisAudioSha256", result.AnalysisAudioSha256);
+        command.Parameters.AddWithValue("$analysisAudioByteLength", result.AnalysisAudioByteLength);
+        command.Parameters.AddWithValue("$analysisAudioCodec", result.AnalysisAudioCodec);
+        command.Parameters.AddWithValue("$analysisAudioSampleRateHz", result.AnalysisAudioSampleRateHz);
+        command.Parameters.AddWithValue("$analysisAudioChannelCount", result.AnalysisAudioChannelCount);
+        command.Parameters.AddWithValue("$analysisAudioSampleCount", result.AnalysisAudioSampleCount);
+        command.Parameters.AddWithValue(
+            "$analysisAudioDurationMicroseconds",
+            result.AnalysisAudioDurationMicroseconds);
+        command.Parameters.AddWithValue(
+            "$timestampMapWorkspaceRelativePath",
+            result.TimestampMapWorkspaceRelativePath);
+        command.Parameters.AddWithValue("$timestampMapSha256", result.TimestampMapSha256);
+        command.Parameters.AddWithValue("$timestampMapByteLength", result.TimestampMapByteLength);
+        command.Parameters.AddWithValue("$manifestWorkspaceRelativePath", result.ManifestWorkspaceRelativePath);
+        command.Parameters.AddWithValue("$manifestSha256", result.ManifestSha256);
+        command.Parameters.AddWithValue("$manifestByteLength", result.ManifestByteLength);
+        command.Parameters.AddWithValue(
+            "$sourceTimelineOriginMicroseconds",
+            result.SourceTimelineOriginMicroseconds);
+        command.Parameters.AddWithValue("$mappedDurationMicroseconds", result.MappedDurationMicroseconds);
+        command.Parameters.AddWithValue("$videoMapEntryCount", result.VideoMapEntryCount);
+        command.Parameters.AddWithValue("$audioMapSegmentCount", result.AudioMapSegmentCount);
+        command.Parameters.AddWithValue("$ffmpegVersion", result.FfmpegVersion);
+        command.Parameters.AddWithValue(
+            "$ffmpegCompilerIdentifier",
+            result.FfmpegCompilerIdentifier);
+        command.Parameters.AddWithValue(
+            "$ffmpegConfigurationSha256",
+            result.FfmpegConfigurationSha256);
+        command.Parameters.AddWithValue("$ffmpegExecutableSha256", result.FfmpegExecutableSha256);
+        command.Parameters.AddWithValue(
+            "$mediaValidationContractSha256",
+            result.MediaValidationContractSha256);
+        command.Parameters.AddWithValue("$mediaQualityState", result.MediaQualityState.ToString());
+        command.Parameters.AddWithValue(
+            "$modelApplicabilityState",
+            result.ModelApplicabilityState.ToString());
+        command.Parameters.AddWithValue("$preprocessedUtc", FormatTimestamp(result.PreprocessedAtUtc));
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<StoredMediaPreprocessingResult?> ReadMediaPreprocessingResultAsync(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        Guid mediaAssetId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT
+                result.media_asset_id,
+                result.source_sha256,
+                result.source_byte_length,
+                result.preprocessing_contract_version,
+                result.preprocessing_contract_sha256,
+                result.proxy_workspace_relative_path,
+                result.proxy_sha256,
+                result.proxy_byte_length,
+                result.proxy_container_format,
+                result.proxy_video_codec,
+                result.proxy_pixel_format,
+                result.proxy_width,
+                result.proxy_height,
+                result.proxy_frame_rate_numerator,
+                result.proxy_frame_rate_denominator,
+                result.proxy_audio_codec,
+                result.proxy_audio_sample_rate_hz,
+                result.proxy_audio_channel_count,
+                result.proxy_duration_microseconds,
+                result.analysis_audio_workspace_relative_path,
+                result.analysis_audio_sha256,
+                result.analysis_audio_byte_length,
+                result.analysis_audio_codec,
+                result.analysis_audio_sample_rate_hz,
+                result.analysis_audio_channel_count,
+                result.analysis_audio_sample_count,
+                result.analysis_audio_duration_microseconds,
+                result.timestamp_map_workspace_relative_path,
+                result.timestamp_map_sha256,
+                result.timestamp_map_byte_length,
+                result.manifest_workspace_relative_path,
+                result.manifest_sha256,
+                result.manifest_byte_length,
+                result.source_timeline_origin_microseconds,
+                result.mapped_duration_microseconds,
+                result.video_map_entry_count,
+                result.audio_map_segment_count,
+                result.ffmpeg_version,
+                result.ffmpeg_compiler_identifier,
+                result.ffmpeg_configuration_sha256,
+                result.ffmpeg_executable_sha256,
+                result.media_validation_contract_sha256,
+                result.media_quality_state,
+                result.model_applicability_state,
+                result.preprocessed_utc,
+                asset.workspace_relative_path,
+                asset.sha256,
+                asset.byte_length
+            FROM media_preprocessing_results AS result
+            INNER JOIN media_assets AS asset ON asset.id = result.media_asset_id
+            WHERE result.media_asset_id = $mediaAssetId;
+            """;
+        command.Parameters.AddWithValue("$mediaAssetId", mediaAssetId.ToString("D"));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+            ? MapMediaPreprocessingResult(reader)
+            : null;
+    }
+
+    private static async Task<IReadOnlyList<StoredMediaPreprocessingResult>> ReadMediaPreprocessingResultsAsync(
+        SqliteConnection connection,
+        Guid profileId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                result.media_asset_id,
+                result.source_sha256,
+                result.source_byte_length,
+                result.preprocessing_contract_version,
+                result.preprocessing_contract_sha256,
+                result.proxy_workspace_relative_path,
+                result.proxy_sha256,
+                result.proxy_byte_length,
+                result.proxy_container_format,
+                result.proxy_video_codec,
+                result.proxy_pixel_format,
+                result.proxy_width,
+                result.proxy_height,
+                result.proxy_frame_rate_numerator,
+                result.proxy_frame_rate_denominator,
+                result.proxy_audio_codec,
+                result.proxy_audio_sample_rate_hz,
+                result.proxy_audio_channel_count,
+                result.proxy_duration_microseconds,
+                result.analysis_audio_workspace_relative_path,
+                result.analysis_audio_sha256,
+                result.analysis_audio_byte_length,
+                result.analysis_audio_codec,
+                result.analysis_audio_sample_rate_hz,
+                result.analysis_audio_channel_count,
+                result.analysis_audio_sample_count,
+                result.analysis_audio_duration_microseconds,
+                result.timestamp_map_workspace_relative_path,
+                result.timestamp_map_sha256,
+                result.timestamp_map_byte_length,
+                result.manifest_workspace_relative_path,
+                result.manifest_sha256,
+                result.manifest_byte_length,
+                result.source_timeline_origin_microseconds,
+                result.mapped_duration_microseconds,
+                result.video_map_entry_count,
+                result.audio_map_segment_count,
+                result.ffmpeg_version,
+                result.ffmpeg_compiler_identifier,
+                result.ffmpeg_configuration_sha256,
+                result.ffmpeg_executable_sha256,
+                result.media_validation_contract_sha256,
+                result.media_quality_state,
+                result.model_applicability_state,
+                result.preprocessed_utc,
+                asset.workspace_relative_path,
+                asset.sha256,
+                asset.byte_length
+            FROM media_preprocessing_results AS result
+            INNER JOIN media_assets AS asset ON asset.id = result.media_asset_id
+            WHERE asset.profile_id = $profileId
+            ORDER BY result.preprocessed_utc, result.media_asset_id;
+            """;
+        command.Parameters.AddWithValue("$profileId", profileId.ToString("D"));
+        var results = new List<StoredMediaPreprocessingResult>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            results.Add(MapMediaPreprocessingResult(reader));
+        }
+
+        return results;
+    }
+
+    private static StoredMediaPreprocessingResult MapMediaPreprocessingResult(SqliteDataReader reader)
+    {
+        var qualityText = reader.GetString(42);
+        if (!Enum.TryParse<MediaQualityState>(qualityText, ignoreCase: false, out var qualityState) ||
+            !Enum.IsDefined(qualityState))
+        {
+            throw new InvalidDataException(
+                $"Media asset '{reader.GetString(0)}' has unsupported media-quality state '{qualityText}'.");
+        }
+
+        var applicabilityText = reader.GetString(43);
+        if (!Enum.TryParse<ModelApplicabilityState>(
+                applicabilityText,
+                ignoreCase: false,
+                out var applicabilityState) ||
+            !Enum.IsDefined(applicabilityState))
+        {
+            throw new InvalidDataException(
+                $"Media asset '{reader.GetString(0)}' has unsupported model-applicability state " +
+                $"'{applicabilityText}'.");
+        }
+
+        var result = new StoredMediaPreprocessingResult(
+            Guid.Parse(reader.GetString(0)),
+            reader.GetString(1),
+            reader.GetInt64(2),
+            reader.GetString(3),
+            reader.GetString(4),
+            reader.GetString(5),
+            reader.GetString(6),
+            reader.GetInt64(7),
+            reader.GetString(8),
+            reader.GetString(9),
+            reader.GetString(10),
+            reader.GetInt32(11),
+            reader.GetInt32(12),
+            reader.GetInt64(13),
+            reader.GetInt64(14),
+            reader.GetString(15),
+            reader.GetInt32(16),
+            reader.GetInt32(17),
+            reader.GetInt64(18),
+            reader.GetString(19),
+            reader.GetString(20),
+            reader.GetInt64(21),
+            reader.GetString(22),
+            reader.GetInt32(23),
+            reader.GetInt32(24),
+            reader.GetInt64(25),
+            reader.GetInt64(26),
+            reader.GetString(27),
+            reader.GetString(28),
+            reader.GetInt64(29),
+            reader.GetString(30),
+            reader.GetString(31),
+            reader.GetInt64(32),
+            reader.GetInt64(33),
+            reader.GetInt64(34),
+            reader.GetInt32(35),
+            reader.GetInt32(36),
+            reader.GetString(37),
+            reader.GetString(38),
+            reader.GetString(39),
+            reader.GetString(40),
+            reader.GetString(41),
+            qualityState,
+            applicabilityState,
+            ParseTimestamp(reader.GetString(44)));
+        try
+        {
+            ValidateMediaPreprocessingResult(result);
+            ValidateMediaPreprocessingResultPaths(result, reader.GetString(45));
+            if (!string.Equals(result.SourceSha256, reader.GetString(46), StringComparison.Ordinal) ||
+                result.SourceByteLength != reader.GetInt64(47))
+            {
+                throw new ArgumentException(
+                    "The stored preprocessing result does not match its source asset.",
+                    nameof(result));
+            }
+        }
+        catch (ArgumentException exception)
+        {
+            throw new InvalidDataException(
+                $"Media asset '{result.MediaAssetId}' has an invalid stored preprocessing result.",
+                exception);
+        }
+
+        return result;
+    }
+
     private static async Task<StoredMediaAsset?> ReadMediaAssetByHashAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -2186,7 +3184,7 @@ public sealed class SqliteProfileStore
         command.Transaction = transaction;
         command.CommandText = """
             SELECT id, profile_id, sha256, workspace_relative_path, byte_length, state,
-                   probe_failure, created_utc, updated_utc
+                   probe_failure, preprocessing_failure, created_utc, updated_utc
             FROM media_assets
             WHERE profile_id = $profileId
               AND sha256 = $sha256;
@@ -2210,7 +3208,7 @@ public sealed class SqliteProfileStore
         command.Transaction = transaction;
         command.CommandText = """
             SELECT id, profile_id, sha256, workspace_relative_path, byte_length, state,
-                   probe_failure, created_utc, updated_utc
+                   probe_failure, preprocessing_failure, created_utc, updated_utc
             FROM media_assets
             WHERE profile_id = $profileId
               AND workspace_relative_path = $workspaceRelativePath COLLATE NOCASE;
@@ -2231,7 +3229,7 @@ public sealed class SqliteProfileStore
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT id, profile_id, sha256, workspace_relative_path, byte_length, state,
-                   probe_failure, created_utc, updated_utc
+                   probe_failure, preprocessing_failure, created_utc, updated_utc
             FROM media_assets
             WHERE profile_id = $profileId
             ORDER BY created_utc, id;
@@ -2275,11 +3273,28 @@ public sealed class SqliteProfileStore
                 $"Media asset '{reader.GetString(0)}' has an invalid stored probe failure.");
         }
 
+        var preprocessingFailure = reader.IsDBNull(7) ? null : reader.GetString(7);
+        if (!string.Equals(
+                preprocessingFailure,
+                SanitizePreprocessingFailure(preprocessingFailure),
+                StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                $"Media asset '{reader.GetString(0)}' has an invalid stored preprocessing failure.");
+        }
+
         if ((state is MediaAssetState.ValidationFailed or MediaAssetState.IntegrityFailed) !=
             (probeFailure is not null))
         {
             throw new InvalidDataException(
                 $"Media asset '{reader.GetString(0)}' has inconsistent probe status and failure detail.");
+        }
+
+        if ((state == MediaAssetState.PreprocessingFailed) != (preprocessingFailure is not null)
+            || probeFailure is not null && preprocessingFailure is not null)
+        {
+            throw new InvalidDataException(
+                $"Media asset '{reader.GetString(0)}' has inconsistent preprocessing status and failure detail.");
         }
 
         return new StoredMediaAsset(
@@ -2294,8 +3309,9 @@ public sealed class SqliteProfileStore
             byteLength,
             state,
             probeFailure,
-            ParseTimestamp(reader.GetString(7)),
-            ParseTimestamp(reader.GetString(8)));
+            preprocessingFailure,
+            ParseTimestamp(reader.GetString(8)),
+            ParseTimestamp(reader.GetString(9)));
     }
 
     private static async Task InsertMediaAssetAsync(
@@ -2309,10 +3325,10 @@ public sealed class SqliteProfileStore
         command.CommandText = """
             INSERT INTO media_assets (
                 id, profile_id, sha256, workspace_relative_path, byte_length, state, probe_failure,
-                created_utc, updated_utc)
+                preprocessing_failure, created_utc, updated_utc)
             VALUES (
                 $id, $profileId, $sha256, $workspaceRelativePath, $byteLength, $state, $probeFailure,
-                $createdUtc, $updatedUtc);
+                $preprocessingFailure, $createdUtc, $updatedUtc);
             """;
         command.Parameters.AddWithValue("$id", asset.Id.ToString("D"));
         command.Parameters.AddWithValue("$profileId", asset.ProfileId.ToString("D"));
@@ -2321,6 +3337,9 @@ public sealed class SqliteProfileStore
         command.Parameters.AddWithValue("$byteLength", asset.ByteLength);
         command.Parameters.AddWithValue("$state", asset.State.ToString());
         command.Parameters.AddWithValue("$probeFailure", (object?)asset.ValidationFailure ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "$preprocessingFailure",
+            (object?)asset.PreprocessingFailure ?? DBNull.Value);
         command.Parameters.AddWithValue("$createdUtc", FormatTimestamp(asset.CreatedAtUtc));
         command.Parameters.AddWithValue("$updatedUtc", FormatTimestamp(asset.UpdatedAtUtc));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -2496,7 +3515,7 @@ public sealed class SqliteProfileStore
         DateTimeOffset timestamp,
         CancellationToken cancellationToken)
     {
-        var readiness = job.Kind == ProcessingJobKind.MediaValidation
+        var readiness = job.Kind is ProcessingJobKind.MediaValidation or ProcessingJobKind.MediaPreprocessing
             ? await DetermineMediaReadinessAsync(
                     connection,
                     transaction,
@@ -2529,9 +3548,16 @@ public sealed class SqliteProfileStore
                 SUM(CASE WHEN asset.state = 'AwaitingProbe' THEN 1 ELSE 0 END),
                 SUM(CASE WHEN asset.state = 'ValidationFailed' THEN 1 ELSE 0 END),
                 SUM(CASE WHEN asset.state = 'Validated' THEN 1 ELSE 0 END),
-                SUM(CASE WHEN asset.state = 'IntegrityFailed' THEN 1 ELSE 0 END)
+                SUM(CASE WHEN asset.state = 'PreprocessingFailed' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN asset.state = 'Prepared' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN asset.state = 'IntegrityFailed' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN asset.state = 'Prepared' AND prepared.media_asset_id IS NOT NULL
+                    THEN 1 ELSE 0 END),
+                SUM(CASE WHEN asset.state != 'Prepared' AND prepared.media_asset_id IS NOT NULL
+                    THEN 1 ELSE 0 END)
             FROM training_videos AS video
             LEFT JOIN media_assets AS asset ON asset.id = video.media_asset_id
+            LEFT JOIN media_preprocessing_results AS prepared ON prepared.media_asset_id = asset.id
             WHERE video.profile_id = $profileId
               AND video.is_archived = 0;
             """;
@@ -2547,7 +3573,11 @@ public sealed class SqliteProfileStore
         var awaitingCount = reader.IsDBNull(2) ? 0 : reader.GetInt64(2);
         var failedCount = reader.IsDBNull(3) ? 0 : reader.GetInt64(3);
         var validatedCount = reader.IsDBNull(4) ? 0 : reader.GetInt64(4);
-        var integrityFailedCount = reader.IsDBNull(5) ? 0 : reader.GetInt64(5);
+        var preprocessingFailedCount = reader.IsDBNull(5) ? 0 : reader.GetInt64(5);
+        var preparedCount = reader.IsDBNull(6) ? 0 : reader.GetInt64(6);
+        var integrityFailedCount = reader.IsDBNull(7) ? 0 : reader.GetInt64(7);
+        var preparedResultCount = reader.IsDBNull(8) ? 0 : reader.GetInt64(8);
+        var unexpectedPreparedResultCount = reader.IsDBNull(9) ? 0 : reader.GetInt64(9);
         if (integrityFailedCount != 0)
         {
             return ProfileReadiness.MediaIntegrityFailed;
@@ -2568,12 +3598,24 @@ public sealed class SqliteProfileStore
             return ProfileReadiness.MediaValidationFailed;
         }
 
-        if (validatedCount == activeCount)
+        if (preprocessingFailedCount != 0)
+        {
+            return ProfileReadiness.MediaPreprocessingFailed;
+        }
+
+        if (validatedCount != 0 && validatedCount + preparedCount == activeCount)
         {
             return ProfileReadiness.MediaValidated;
         }
 
-        throw new InvalidDataException($"Profile '{profileId}' has inconsistent media validation states.");
+        if (preparedCount == activeCount &&
+            preparedResultCount == activeCount &&
+            unexpectedPreparedResultCount == 0)
+        {
+            return ProfileReadiness.MediaPrepared;
+        }
+
+        throw new InvalidDataException($"Profile '{profileId}' has inconsistent media processing states.");
     }
 
     private async Task<SqliteConnection> OpenConfiguredConnectionAsync(
@@ -3166,6 +4208,191 @@ public sealed class SqliteProfileStore
         }
     }
 
+    private static void ValidateMediaPreprocessingRegistration(
+        MediaPreprocessingRegistration registration)
+    {
+        ArgumentNullException.ThrowIfNull(registration);
+        ValidateRequiredId(registration.MediaAssetId, nameof(registration.MediaAssetId));
+        if (registration.State == MediaAssetState.Prepared)
+        {
+            if (registration.Result is null || registration.Result.MediaAssetId != registration.MediaAssetId)
+            {
+                throw new ArgumentException(
+                    "Successful preprocessing requires a matching normalized result.",
+                    nameof(registration));
+            }
+
+            if (registration.FailureMessage is not null)
+            {
+                throw new ArgumentException(
+                    "Successful preprocessing cannot include a failure message.",
+                    nameof(registration));
+            }
+
+            ValidateMediaPreprocessingResult(registration.Result);
+            return;
+        }
+
+        if (registration.State == MediaAssetState.PreprocessingFailed)
+        {
+            if (registration.Result is not null || registration.FailureMessage is null)
+            {
+                throw new ArgumentException(
+                    "Failed preprocessing requires a sanitized failure message and no result.",
+                    nameof(registration));
+            }
+
+            return;
+        }
+
+        throw new ArgumentOutOfRangeException(
+            nameof(registration),
+            registration.State,
+            "A preprocessing result must be either prepared or failed.");
+    }
+
+    private static void ValidateMediaPreprocessingResult(StoredMediaPreprocessingResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        ValidateRequiredId(result.MediaAssetId, nameof(result.MediaAssetId));
+        ValidateProbeText(result.PreprocessingContractVersion, nameof(result.PreprocessingContractVersion));
+        ValidateProbeText(result.ProxyContainerFormat, nameof(result.ProxyContainerFormat));
+        ValidateProbeText(result.ProxyVideoCodec, nameof(result.ProxyVideoCodec));
+        ValidateProbeText(result.ProxyPixelFormat, nameof(result.ProxyPixelFormat));
+        ValidateProbeText(result.ProxyAudioCodec, nameof(result.ProxyAudioCodec));
+        ValidateProbeText(result.AnalysisAudioCodec, nameof(result.AnalysisAudioCodec));
+        ValidateProbeText(result.FfmpegVersion, nameof(result.FfmpegVersion));
+        ValidateProbeText(result.FfmpegCompilerIdentifier, nameof(result.FfmpegCompilerIdentifier));
+
+        if (result.SourceByteLength <= 0 ||
+            result.ProxyByteLength <= 0 ||
+            result.AnalysisAudioByteLength <= 0 ||
+            result.TimestampMapByteLength <= 0 ||
+            result.ManifestByteLength <= 0 ||
+            result.ProxyWidth <= 0 ||
+            result.ProxyHeight <= 0 ||
+            result.ProxyFrameRateNumerator <= 0 ||
+            result.ProxyFrameRateDenominator <= 0 ||
+            result.ProxyAudioSampleRateHz <= 0 ||
+            result.ProxyAudioChannelCount <= 0 ||
+            result.ProxyDurationMicroseconds <= 0 ||
+            result.AnalysisAudioSampleRateHz <= 0 ||
+            result.AnalysisAudioChannelCount <= 0 ||
+            result.AnalysisAudioSampleCount <= 0 ||
+            result.AnalysisAudioDurationMicroseconds <= 0 ||
+            result.MappedDurationMicroseconds <= 0 ||
+            result.VideoMapEntryCount <= 0 ||
+            result.AudioMapSegmentCount <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(result),
+                "Preprocessing integrity, normalized output, and timeline values must be positive.");
+        }
+
+        if (!IsLowercaseSha256(result.SourceSha256) ||
+            !IsLowercaseSha256(result.PreprocessingContractSha256) ||
+            !IsLowercaseSha256(result.ProxySha256) ||
+            !IsLowercaseSha256(result.AnalysisAudioSha256) ||
+            !IsLowercaseSha256(result.TimestampMapSha256) ||
+            !IsLowercaseSha256(result.ManifestSha256) ||
+            !IsLowercaseSha256(result.FfmpegConfigurationSha256) ||
+            !IsLowercaseSha256(result.FfmpegExecutableSha256) ||
+            !IsLowercaseSha256(result.MediaValidationContractSha256))
+        {
+            throw new ArgumentException(
+                "Preprocessing integrity and provenance hashes must be lowercase SHA-256 values.",
+                nameof(result));
+        }
+
+        if (result.MediaQualityState != MediaQualityState.NotAssessed ||
+            result.ModelApplicabilityState != ModelApplicabilityState.NotAssessed)
+        {
+            throw new ArgumentException(
+                "This preprocessing contract must leave media quality and model applicability not assessed.",
+                nameof(result));
+        }
+
+        if (result.PreprocessedAtUtc == default)
+        {
+            throw new ArgumentException("A preprocessing timestamp is required.", nameof(result));
+        }
+    }
+
+    private static void ValidateMediaPreprocessingResultForAsset(
+        StoredMediaPreprocessingResult result,
+        StoredMediaAsset asset)
+    {
+        if (!string.Equals(result.SourceSha256, asset.Sha256, StringComparison.Ordinal) ||
+            result.SourceByteLength != asset.ByteLength)
+        {
+            throw new ArgumentException(
+                "The preprocessing result does not identify the snapshotted source asset.",
+                nameof(result));
+        }
+
+        ValidateMediaPreprocessingResultPaths(result, asset.WorkspaceRelativePath);
+    }
+
+    private static void ValidateMediaPreprocessingResultPaths(
+        StoredMediaPreprocessingResult result,
+        string sourceWorkspaceRelativePath)
+    {
+        var normalizedSource = NormalizeBoundedWorkspaceRelativePath(
+            sourceWorkspaceRelativePath,
+            "Media",
+            nameof(sourceWorkspaceRelativePath));
+        if (!string.Equals(normalizedSource, sourceWorkspaceRelativePath, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "The source media path must be canonical.",
+                nameof(sourceWorkspaceRelativePath));
+        }
+
+        var separatorIndex = normalizedSource.LastIndexOf('/');
+        if (separatorIndex <= "Media".Length)
+        {
+            throw new ArgumentException(
+                "The source media asset must be inside its own Media directory.",
+                nameof(sourceWorkspaceRelativePath));
+        }
+
+        var assetDirectory = normalizedSource[..separatorIndex];
+        var resultDirectory = string.Create(
+            CultureInfo.InvariantCulture,
+            $"{assetDirectory}/Prepared/v1_{result.PreprocessingContractSha256[..12]}");
+        ValidateExactPreprocessingArtifactPath(
+            result.ProxyWorkspaceRelativePath,
+            resultDirectory + "/proxy.mp4",
+            nameof(result.ProxyWorkspaceRelativePath));
+        ValidateExactPreprocessingArtifactPath(
+            result.AnalysisAudioWorkspaceRelativePath,
+            resultDirectory + "/audio.wav",
+            nameof(result.AnalysisAudioWorkspaceRelativePath));
+        ValidateExactPreprocessingArtifactPath(
+            result.TimestampMapWorkspaceRelativePath,
+            resultDirectory + "/timestamp-map.json",
+            nameof(result.TimestampMapWorkspaceRelativePath));
+        ValidateExactPreprocessingArtifactPath(
+            result.ManifestWorkspaceRelativePath,
+            resultDirectory + "/preprocessing-manifest.json",
+            nameof(result.ManifestWorkspaceRelativePath));
+    }
+
+    private static void ValidateExactPreprocessingArtifactPath(
+        string actual,
+        string expected,
+        string parameterName)
+    {
+        var normalized = NormalizeBoundedWorkspaceRelativePath(actual, "Media", parameterName);
+        if (!string.Equals(actual, normalized, StringComparison.Ordinal) ||
+            !string.Equals(actual, expected, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "A preprocessing artifact path does not match its fixed versioned asset location.",
+                parameterName);
+        }
+    }
+
     private static void ValidateProbeText(string value, string parameterName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value, parameterName);
@@ -3362,6 +4589,36 @@ public sealed class SqliteProfileStore
         if (resemblesRawOutput)
         {
             return "Media validation failed; detailed tool output was not retained.";
+        }
+
+        var sanitized = new string(trimmed
+            .Select(character => char.IsControl(character) ? ' ' : character)
+            .ToArray());
+        if (sanitized.Length > MaximumStoredErrorLength)
+        {
+            sanitized = sanitized[..MaximumStoredErrorLength];
+        }
+
+        return sanitized.Length == 0 ? null : sanitized;
+    }
+
+    private static string? SanitizePreprocessingFailure(string? failure)
+    {
+        if (string.IsNullOrWhiteSpace(failure))
+        {
+            return null;
+        }
+
+        var trimmed = failure.Trim();
+        var resemblesRawOutput = trimmed.Length > 512 ||
+            trimmed.Any(char.IsControl) ||
+            trimmed.IndexOfAny(['{', '}', '[', ']', '\\']) >= 0 ||
+            trimmed.Contains("/", StringComparison.Ordinal) ||
+            trimmed.Contains(":\\", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Contains("file:", StringComparison.OrdinalIgnoreCase);
+        if (resemblesRawOutput)
+        {
+            return "Media preprocessing failed; detailed tool output was not retained.";
         }
 
         var sanitized = new string(trimmed
