@@ -2,7 +2,7 @@
 
 VerityWorkbench is a local-first Windows research workbench for investigating whether person-specific facial, vocal, timing, and linguistic changes correlate with independently supported intentional deception under controlled conditions.
 
-> Early development — Milestone 5 deterministic media preprocessing. The application creates and edits persistent profiles, ingests explicitly selected local MP4s into user-selected app-managed workspaces, validates an unambiguous video-and-audio stream selection with a complete CPU decode, and uses the same pinned FFmpeg/ffprobe toolchain to prepare a local playback proxy, mono analysis audio, timestamp map, and privacy-bounded manifest. Media quality and model applicability remain **Not assessed**. The application does not yet transcribe speech, extract behavioral features, train a model, verify identity or authenticity, recognize language, or produce any behavioral score or probability.
+> Early development — Milestone 6 prepared-media review. The application creates and edits persistent profiles, ingests explicitly selected local MP4s into user-selected app-managed workspaces, validates and preprocesses them, and can review each unique prepared media asset through its verified presentation-only proxy. The review shows proxy target time and an explicitly approximate affine source presentation timestamp. Media quality and model applicability remain **Not assessed**. The application does not yet transcribe speech, extract behavioral features, train a model, verify identity or authenticity, recognize language, or produce any behavioral score or probability.
 
 The authoritative scientific, product, privacy, and architecture specification is [design_doc.md](design_doc.md).
 
@@ -34,10 +34,11 @@ This repository is being implemented in small, testable slices.
 - [x] Version- and hash-pinned FFmpeg/ffprobe MP4 probing, normalized metadata persistence, and complete selected-stream CPU decode validation
 - [x] Deterministic, journaled preprocessing into a playback-only MP4 proxy, mono analysis WAV, affine timestamp map, and hashed manifest
 - [x] Persistent preprocessing results, cancellation, stale-job recovery, and crash-safe artifact promotion/reconciliation
+- [x] Prepared-media review that verifies the original and complete derivative bundle, lists unique media assets with their aggregated training labels, and plays only the presentation proxy with target and approximate source times
 - [ ] Declared media-quality and model-applicability thresholds; both states currently remain **Not assessed**
 - [ ] Direct-URL resumable downloads
 - [ ] Processing-folder inspection and verified cleanup controls
-- [ ] Playback UI, transcription, and feature extraction
+- [ ] Transcription and behavioral feature extraction
 - [ ] Local multilingual ASR, language confirmation, original-language transcripts, optional separate English translation, and compatible language-model routing
 - [ ] Training, grouped validation, calibration, and local inference
 - [ ] Query-time profile-subject identity gate and face-speaker verification
@@ -45,7 +46,7 @@ This repository is being implemented in small, testable slices.
 - [ ] Query Profile workflow
 - [ ] One-file encrypted `.vwpkg` import/export
 
-**Query Profile** remains deliberately unavailable. Edit Profile updates profile metadata and media eligibility but does not relocate workspaces, delete ingested assets, import packages, or export models. Validation and preprocessing establish only that the selected MP4 streams satisfy the current engineering contracts and that reproducible local presentation/analysis-audio derivatives were prepared. They do not establish subject identity, media authenticity, spoken language, label correctness, media quality, model applicability, or suitability for model training. The playback proxy is not silently accepted as visual model input. No placeholder or random scoring code exists.
+**Query Profile** remains deliberately unavailable. Prepared-media review is a local presentation and inspection aid, not query analysis. Edit Profile updates profile metadata and media eligibility but does not relocate workspaces, delete ingested assets, import packages, or export models. Validation, preprocessing, and review do not establish subject identity, media authenticity, spoken language, label correctness, media quality, model applicability, or suitability for model training. The playback proxy is never accepted as visual model input. No placeholder or random scoring code exists.
 
 ## What to install
 
@@ -60,7 +61,7 @@ D:\Tools\VerityWorkbench\FFmpeg\8.1\bin\ffprobe.exe
 
 The required build is BtbN FFmpeg-Builds `win64-lgpl-8.1`, build identity `n8.1.2-44-g7c533d0f86-20260815`, from release tag `autobuild-2026-08-15-13-02`. It reports `LGPL version 3 or later`; GPL and nonfree variants are not accepted by this validation contract.
 
-No additional install is required for Milestone 5 beyond the pinned FFmpeg/ffprobe toolchain already required by Milestone 4. Python, GPU drivers/toolkits, Whisper, and model files are **not needed** for this milestone. Validation and preprocessing deliberately use CPU/software paths.
+No additional install is required for Milestone 6 beyond the pinned FFmpeg/ffprobe toolchain already required for validation and preprocessing. Prepared-media review uses the app's existing Windows playback stack and the already-created `proxy.mp4`; it does not install or invoke a model. Python, GPU drivers/toolkits, Whisper, and model files are **not needed** for this milestone.
 
 ### On another Windows development computer
 
@@ -246,6 +247,25 @@ Version-pinned, CPU-only preprocessing improves reproducibility but does not pro
 The timestamp map is intentionally modest: it rebases the selected streams to a common first-decoded presentation-time origin and records an affine target-time relationship. It is **not** exact source-frame lineage. Conversion to a 30 fps proxy may select, duplicate, or omit source frames; asynchronous audio resampling may pad, trim, or compensate for timestamp discontinuities; and microsecond/sample conversions are rounded. Later feature work must use a separately frozen and validated visual-input contract rather than assuming the playback proxy preserves every source frame.
 
 Select **Cancel Processing** to stop preprocessing. The app terminates the FFmpeg/ffprobe process tree, waits for exit, closes process and media handles, records no successful preprocessing result, promotes no partial bundle, and retains the unique `Processing` job folder for inspection or later verified cleanup. Promotion uses a durable journal around the short atomic directory move. On Refresh or restart, terminal/stale jobs reconcile a database-committed bundle, return an uncommitted bundle to its job when safe, or mark an inconsistent committed bundle as an integrity failure. Prepared results and readiness persist across app restarts.
+
+### Review prepared media
+
+1. Select a profile showing **Media prepared — quality and applicability not assessed**.
+2. Select **Review Prepared Media**. The review loads each unique media asset once. When several training selections reference the same content, their recording labels and training conditions are aggregated for display rather than presented as independent media.
+3. Select an asset. Before assigning a player source, VerityWorkbench verifies the registered original's expected length and SHA-256 and verifies the complete accepted prepared bundle—`proxy.mp4`, `audio.wav`, `timestamp-map.json`, and `preprocessing-manifest.json`—against its stored paths, lengths, and hashes. Playback is refused if any required artifact is missing, changed, or outside the expected workspace boundary.
+4. Use the player to play, pause, or seek the verified `proxy.mp4`. New review players start at 50% volume. The review surface scrolls when the window is too short to display the video and its transport controls together. The player shows the current proxy **Target time** and an **Approximate source PTS** computed as the immutable v1 preprocessing result's source-timeline origin plus target time. That same origin and 1:1 affine mapping are recorded in the hash-verified v1 timestamp map. The source value is explicitly approximate: the 30 fps presentation proxy can select, duplicate, or omit source frames, so this display is not frame-accurate source lineage.
+5. Return to the main view when finished. Review creates no media, feature, transcript, model, or score and does not change `MediaPrepared`, `MediaQualityState.NotAssessed`, or `ModelApplicabilityState.NotAssessed`.
+
+Review uses only `proxy.mp4` for presentation. It does not open `original.mp4` as the player source, use `audio.wav` as a behavioral input, approve the proxy for visual analysis, or assess identity, authenticity, spoken language, media quality, model applicability, truth, or deception.
+
+### Manual test for prepared-media review
+
+1. Build and run the app using the existing commands above; no new dependency or model installation is required.
+2. Select a profile whose preprocessing completed successfully, then select **Review Prepared Media**.
+3. Confirm each unique media asset appears once and that all linked recording labels/training conditions are shown with it.
+4. Select each asset and confirm playback starts only after verification, play/pause/seek work, and both **Target time** and **Approximate source PTS** update while playing and after seeking.
+5. Close and reopen the review, then restart the app and repeat the check. The profile must still show **Media prepared — quality and applicability not assessed**.
+6. Confirm **Query Profile** remains unavailable and that no transcript, feature, model, confidence, percentage, or behavioral result is displayed or created.
 
 ## Persistent local metadata
 

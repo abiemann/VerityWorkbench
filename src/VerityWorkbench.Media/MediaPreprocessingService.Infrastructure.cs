@@ -412,7 +412,7 @@ public sealed partial class MediaPreprocessingService
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            throw new IOException(error, exception);
+            throw new MediaIntegrityException(error, exception);
         }
 
         var relative = Path.GetRelativePath(normalizedRoot, normalizedCandidate);
@@ -421,7 +421,7 @@ public sealed partial class MediaPreprocessingService
             || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
             || relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal))
         {
-            throw new IOException(error);
+            throw new MediaIntegrityException(error);
         }
 
         return normalizedCandidate;
@@ -432,7 +432,7 @@ public sealed partial class MediaPreprocessingService
         var actualParent = Directory.GetParent(Path.TrimEndingDirectorySeparator(child));
         if (actualParent is null || !PathsEqual(parent, actualParent.FullName))
         {
-            throw new IOException(error);
+            throw new MediaIntegrityException(error);
         }
     }
 

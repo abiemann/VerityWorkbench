@@ -35,6 +35,18 @@
 - [ ] Before introducing preprocessing contract v2, add version-dispatched verification/migration so an intact historical v1 bundle is reported as compatible or reprocessing-needed, never as damaged merely because the current contract changed.
 - [ ] Add automated long-running cancellation, forced-restart journal, tampered-committed-bundle, and representative real-media fixtures beyond the current generated installed-tool integration coverage.
 
+## Milestone 6 prepared-media review and playback
+
+- [x] Add a **Review Prepared Media** action for profiles with accepted prepared assets; keep **Query Profile** unavailable.
+- [x] Load each unique media asset once and aggregate every linked training condition and recording label for display without treating repeated selections as independent media.
+- [x] Before assigning a player source, recheck the registered original's stored byte length and SHA-256 and verify the complete accepted prepared bundle (`proxy.mp4`, `audio.wav`, `timestamp-map.json`, and `preprocessing-manifest.json`) against its stored paths, lengths, and hashes.
+- [x] Use only the verified `proxy.mp4` for presentation playback; never use it as an approved visual-analysis input or silently fall back to `original.mp4`.
+- [x] Provide play, pause, and seek controls with the current proxy target time and an explicitly labeled **Approximate source PTS** computed from the immutable v1 preprocessing source-timeline origin plus target time; never describe it as frame-accurate source lineage.
+- [x] Refuse playback and use the existing safe integrity-failure path when the original or any required prepared artifact is missing, changed, or outside the expected workspace boundary.
+- [x] Keep `ProfileReadiness.MediaPrepared`, `MediaQualityState.NotAssessed`, and `ModelApplicabilityState.NotAssessed` unchanged before, during, and after review.
+- [ ] Add focused tests for unique-asset aggregation, complete pre-playback verification, affine time display, path containment, and state preservation across close/reopen and restart.
+- [x] Perform the README manual test on prepared media and confirm that review creates no transcript, feature, identity/language/quality/applicability result, model, score, or percentage.
+
 ## Multilingual transcription and model-language gate
 
 - [ ] Select and license a local multilingual ASR model/runtime; do not use an English-only model for the product path.

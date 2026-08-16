@@ -14,7 +14,7 @@
 
 **Working description:** A person-specific system for studying whether synchronized facial, vocal, and linguistic changes are associated with independently verified intentional deception under controlled, comparable conditions.
 
-**Current implementation snapshot:** Implementation Milestone 5 provides persistent local MP4 ingest, complete selected-stream validation, and deterministic preprocessing into a playback-only proxy, mono analysis WAV, affine target-time map, and privacy-bounded manifest. Media quality and model applicability remain `NotAssessed`; transcription, feature extraction, identity/authenticity assessment, training, inference, and scoring are not implemented. This implementation-slice numbering is distinct from the longer-term scientific delivery roadmap in Section 14.
+**Current implementation snapshot:** Implementation Milestone 6 adds prepared-media review to the persistent local MP4 ingest, complete selected-stream validation, and deterministic preprocessing path. Each unique media asset is reviewed through its verified presentation-only proxy with aggregated training labels, proxy target time, and an explicitly approximate affine source presentation timestamp. The registered original and complete accepted prepared bundle are verified before playback. Media quality and model applicability remain `NotAssessed`; transcription, feature extraction, identity/authenticity/language assessment, training, inference, and scoring are not implemented. This implementation-slice numbering is distinct from the longer-term scientific delivery roadmap in Section 14.
 
 ## 1. Executive summary
 
@@ -708,6 +708,14 @@ The implemented timestamp map is an affine target-time mapping anchored at the m
 
 In the current application, ingest, validation, and preprocessing are separate persistent phases. One **Process Data** click advances at most one phase. A validated profile reports **Media validated — awaiting preprocessing**; successful preprocessing reports **Media prepared — quality and applicability not assessed**. These are engineering states, not scientific eligibility decisions.
 
+Implementation Milestone 6 adds a read-only prepared-media review boundary after preprocessing. The review enumerates unique media assets, not training-selection rows: if one content-addressed asset is linked by multiple selections, their recording labels and training conditions are aggregated as annotations on the single asset. This prevents the review UI from visually implying that duplicate selections, simultaneous views, excerpts, or repeated labels are independent observations.
+
+Before any player source is assigned, the application rechecks the registered original against its stored byte length and SHA-256 and verifies all four accepted bundle artifacts—`proxy.mp4`, `audio.wav`, `timestamp-map.json`, and `preprocessing-manifest.json`—against their stored workspace-relative paths, byte lengths, and SHA-256 hashes. Path resolution remains confined to the profile workspace. Any missing, changed, substituted, or out-of-bound artifact refuses playback and follows the existing persistent integrity-failure path; review never falls back to an unverified derivative or directly plays the original.
+
+Only the verified `proxy.mp4` is supplied to the media player. Its current playback position is the proxy **target time**. For preprocessing contract v1, the accompanying **Approximate source PTS** is calculated as the immutable stored source-timeline origin plus target time, using checked, bounded time arithmetic. The same origin and 1:1 affine relationship are recorded in the hash-verified v1 timestamp map. Review does not claim to parse a general future mapping contract at playback; version-dispatched mapping must be added before a non-v1 contract is accepted. The label and help text must preserve the word **Approximate** because the proxy's 30 fps conversion can select, duplicate, or omit source frames and the map does not provide exact frame lineage.
+
+Opening, seeking, pausing, closing, or reopening review changes no processing or scientific state. `ProfileReadiness.MediaPrepared`, `MediaQualityState.NotAssessed`, and `ModelApplicabilityState.NotAssessed` remain unchanged. Review performs no identity, authenticity, speaker, language, quality, applicability, feature, training, inference, or behavioral assessment and creates no transcript, feature artifact, model, score, confidence, probability, or percentage. It requires no dependency beyond the existing application/runtime and already-installed preprocessing toolchain; playback itself consumes the already-created proxy and invokes no model or new worker.
+
 ### 8.5 Storage layout
 
 The user chooses the profile workspace when adding the profile. The download-staging root is independently selectable and defaults to `Downloads` inside that workspace. Fixed, human-readable top-level folder names make the workload inspectable; leaf names combine a safe display label or job kind with a short stable identifier, while full hashes remain in manifests and the database.
@@ -913,6 +921,8 @@ The primary navigation presents three actions:
 
 Profile cards show the pseudonymous display name, query-ready language/model versions, readiness, pending changes, and background job status. States include `Draft`, `Downloading`, `Processing`, `Needs Review`, `Training`, `Validating`, `Ready — Baseline Only`, `Ready — Experimental Model`, `Ready — Imported Query Model`, `Cancelled`, `Update Failed`, and `Cannot Model Reliably`. During an ordinary update, the last validated model for each language remains clearly identified and queryable until a same-language replacement passes every promotion gate.
 
+Before Query Profile exists, a selected `MediaPrepared` profile may expose the secondary **Review Prepared Media** action described in Section 10.5. This action reviews accepted presentation derivatives and does not make the profile query-ready.
+
 ### 10.2 Add Profile
 
 The Add Profile flow:
@@ -958,9 +968,22 @@ The main view and profile detail view show current stage, progress, elapsed time
 
 Cancelling a processing job stops the full worker tree, closes every stream and file handle, records the cancellation, and leaves its unique processing folder intact and unlocked. No partial artifact or model is promoted. The UI exposes **Open Folder** and **Delete Processing Data**, allowing the user to inspect or later remove the bounded job directory.
 
-In implementation Milestone 5, **Process Data** deliberately performs only the next eligible phase per click: local ingest, then MP4 validation, then deterministic preprocessing. Preprocessing progress and result state are persisted. Cancellation terminates the pinned FFmpeg/ffprobe process tree and records no false success; restart reconciliation resolves journaled promotion state before recovering stale jobs. A prepared profile remains explicitly **quality and applicability not assessed** until separately declared and validated gates exist.
+In implementation Milestones 5 and 6, **Process Data** deliberately performs only the next eligible processing phase per click: local ingest, then MP4 validation, then deterministic preprocessing. Preprocessing progress and result state are persisted. Cancellation terminates the pinned FFmpeg/ffprobe process tree and records no false success; restart reconciliation resolves journaled promotion state before recovering stale jobs. Prepared-media review is not another processing phase or job. A prepared profile remains explicitly **quality and applicability not assessed** until separately declared and validated gates exist.
 
-### 10.5 Query Profile
+### 10.5 Prepared-media review
+
+The prepared-media review flow:
+
+1. Select a profile in `MediaPrepared` state and choose **Review Prepared Media**.
+2. Load each unique media asset once and show its aggregated recording labels and training conditions. These annotations remain human-entered curation metadata and do not assert independent samples or label correctness.
+3. Before enabling playback for a selected asset, verify the original's expected length and hash, resolve every required prepared-artifact path within the profile workspace, and verify the complete bundle's stored lengths and hashes.
+4. If verification succeeds, assign only the accepted `proxy.mp4` to the player. If verification fails, refuse playback and surface the existing integrity-repair state rather than substituting the original or another derivative.
+5. Show play, pause, and seek controls, the current proxy **Target time**, and an explicitly labeled **Approximate source PTS** computed from the immutable v1 preprocessing source-timeline origin plus target time.
+6. Close or return to the main view without changing media readiness, quality, applicability, or any model state.
+
+This view is a presentation and inspection surface only. It does not assess who appears or speaks, determine authenticity or language, measure media quality or model applicability, extract behavioral features, train or select a model, or produce an inference, confidence, score, percentage, or truth/deception result. The playback proxy remains excluded from every visual-model input contract.
+
+### 10.6 Query Profile
 
 The Query Profile flow:
 
@@ -1011,7 +1034,7 @@ Before calibration, an eligible query may show a directional **Experimental beha
 
 The interface never labels an output `% truth`, `truth confidence`, or sentence truthfulness, and it never treats one minus a deception score as factual truth. Identity, authenticity, applicability, and behavioral values are never multiplied or collapsed into a single confidence. Transcript sentences are presentation and seek units, not automatically independent statistical observations. Output granularity must match the model's trained and validated target: a whole-video model may show only a shared video/answer result, while true per-answer or per-claim output requires aligned labels, features, grouped evaluation, and calibration at that level. Query results are never automatically recycled as training labels.
 
-### 10.6 Synchronized label and tracking review
+### 10.7 Synchronized label and tracking review
 
 - Video player with frame-accurate timeline.
 - Subject-face selection, synchronized-view grouping, and tracking review.
@@ -1021,7 +1044,7 @@ The interface never labels an output `% truth`, `truth confidence`, or sentence 
 - Face/audio/ASR confidence overlays.
 - Mandatory human review before a training label becomes eligible.
 
-### 10.7 Experiment designer
+### 10.8 Experiment designer
 
 - Select a profile and eligible independent sessions or capture groups.
 - Define outcome and inclusion criteria.
@@ -1029,7 +1052,7 @@ The interface never labels an output `% truth`, `truth confidence`, or sentence 
 - Show independent session counts rather than inflated frame, sentence, or camera-view counts.
 - Warn about class/source/topic/device/camera leakage.
 
-### 10.8 Training and validation
+### 10.9 Training and validation
 
 - Build and validate identity enrollment/templates independently of truth/deception labels.
 - Display genuine/impostor identity results, threshold versions, modality conflicts, abstention, and wrong-subject score leakage separately from behavioral-model metrics.
@@ -1041,7 +1064,7 @@ The interface never labels an output `% truth`, `truth confidence`, or sentence 
 - Generate a model card and immutable internal model version that remains deletable when authorization is withdrawn.
 - Promote a candidate atomically only after validation succeeds.
 
-### 10.9 Model import and export
+### 10.10 Model import and export
 
 The import action accepts exactly one `.vwpkg` file, displays its package type and declared lineage, validates it in a private staging job, and explains whether the resulting profile is query-only or extendable. It never runs package-provided code or downloads missing dependencies.
 

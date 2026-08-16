@@ -111,6 +111,42 @@ public sealed record MediaPreparedVerificationResult(
     public bool IsValid => State == MediaPreparedVerificationState.Verified;
 }
 
+/// <summary>
+/// Owns the exact read-only proxy handle whose bytes were verified. The handle
+/// denies write and delete sharing until the consumer disposes the lease.
+/// </summary>
+public sealed class PreparedMediaProxyLease : IDisposable, IAsyncDisposable
+{
+    private FileStream? _stream;
+
+    internal PreparedMediaProxyLease(FileStream stream)
+    {
+        _stream = stream ?? throw new ArgumentNullException(nameof(stream));
+    }
+
+    public Stream Stream => _stream
+        ?? throw new ObjectDisposedException(nameof(PreparedMediaProxyLease));
+
+    public void Dispose() => Interlocked.Exchange(ref _stream, null)?.Dispose();
+
+    public async ValueTask DisposeAsync()
+    {
+        var stream = Interlocked.Exchange(ref _stream, null);
+        if (stream is not null)
+        {
+            await stream.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+}
+
+public sealed record PreparedMediaProxyOpenResult(
+    MediaPreparedVerificationState State,
+    PreparedMediaProxyLease? Lease,
+    string? FailureReason)
+{
+    public bool IsOpen => State == MediaPreparedVerificationState.Verified && Lease is not null;
+}
+
 public enum MediaPreprocessingFailure
 {
     ToolContractInvalid,

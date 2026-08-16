@@ -34,7 +34,7 @@
                     VerticalAlignment="Center"
                     Background="{ThemeResource AccentFillColorSecondaryBrush}"
                     CornerRadius="16">
-                    <TextBlock Text="Milestone 5 · deterministic preprocessing" />
+                    <TextBlock Text="Milestone 6 · prepared-media review" />
                 </Border>
             </Grid>
         </Border>
@@ -54,7 +54,7 @@
                     <StackPanel Spacing="4">
                         <TextBlock FontWeight="SemiBold" Text="Research limitation" />
                         <TextBlock
-                            Text="This is not a general-purpose lie detector. This milestone creates local playback, analysis-audio, and timestamp-mapping derivatives from validated MP4s. It does not assess identity, authenticity, language, face or voice quality, model applicability, behavior, truth, or deception."
+                            Text="This is not a general-purpose lie detector. This milestone adds verified presentation-only playback of prepared media proxies. It does not assess identity, authenticity, language, face or voice quality, model applicability, behavior, truth, or deception."
                             TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
@@ -108,6 +108,7 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock
                             VerticalAlignment="Center"
@@ -128,8 +129,14 @@
                             IsEnabled="False"
                             Style="{StaticResource AccentButtonStyle}" />
                         <Button
-                            x:Name="CancelProcessingButton"
+                            x:Name="ReviewPreparedMediaButton"
                             Grid.Column="3"
+                            Click="ReviewPreparedMedia_Click"
+                            Content="Review Prepared Media"
+                            IsEnabled="False" />
+                        <Button
+                            x:Name="CancelProcessingButton"
+                            Grid.Column="4"
                             Click="CancelProcessing_Click"
                             Content="Cancel Processing"
                             IsEnabled="False" />
@@ -177,6 +184,167 @@
                     </ListView>
                 </StackPanel>
             </Grid>
+
+            <ScrollViewer
+                x:Name="PreparedMediaReviewView"
+                HorizontalContentAlignment="Stretch"
+                HorizontalScrollBarVisibility="Disabled"
+                HorizontalScrollMode="Disabled"
+                VerticalContentAlignment="Stretch"
+                VerticalScrollBarVisibility="Auto"
+                Visibility="Collapsed">
+                <Grid Margin="32">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="4">
+                        <TextBlock FontSize="26" FontWeight="SemiBold" Text="Review Prepared Media" />
+                        <TextBlock
+                            x:Name="PreparedMediaReviewProfileText"
+                            Opacity="0.7"
+                            Text="Prepared training media"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button
+                        Grid.Column="1"
+                        VerticalAlignment="Top"
+                        Click="ClosePreparedMediaReview_Click"
+                        Content="Back to profiles" />
+                </Grid>
+
+                <Border
+                    Grid.Row="1"
+                    Margin="0,18,0,18"
+                    Padding="14"
+                    Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                    CornerRadius="8">
+                    <StackPanel Spacing="4">
+                        <TextBlock FontWeight="SemiBold" Text="Presentation-only review" />
+                        <TextBlock
+                            Text="This player uses the generated proxy.mp4 only for human review. The proxy is not approved visual-model input. Playback does not assess identity, authenticity, language, media quality, model applicability, behavior, truth, or deception."
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <Grid Grid.Row="2" ColumnSpacing="18">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="5*" MinWidth="320" />
+                        <ColumnDefinition Width="8*" MinWidth="480" />
+                    </Grid.ColumnDefinitions>
+
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <StackPanel Margin="0,0,0,10" Orientation="Horizontal" Spacing="10">
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                FontSize="18"
+                                FontWeight="SemiBold"
+                                Text="Active prepared assets" />
+                            <ProgressRing
+                                x:Name="PreparedMediaReviewProgress"
+                                Width="20"
+                                Height="20"
+                                IsActive="False" />
+                        </StackPanel>
+                        <ListView
+                            x:Name="PreparedMediaReviewList"
+                            Grid.Row="1"
+                            SelectionChanged="PreparedMediaReviewList_SelectionChanged"
+                            SelectionMode="Single">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Border
+                                        Margin="0,3"
+                                        Padding="12"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="8">
+                                        <StackPanel Spacing="3">
+                                            <TextBlock FontWeight="SemiBold" Text="{Binding DisplayTitle}" />
+                                            <TextBlock Opacity="0.72" Text="{Binding ConditionText}" TextWrapping="Wrap" />
+                                            <TextBlock Opacity="0.72" Text="{Binding RecordingLabelsText}" TextWrapping="Wrap" />
+                                            <TextBlock Opacity="0.72" Text="{Binding ReuseText}" TextWrapping="Wrap" />
+                                            <TextBlock Opacity="0.72" Text="{Binding DurationText}" />
+                                            <TextBlock Opacity="0.55" Text="{Binding AssetReferenceText}" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+
+                    <Grid Grid.Column="1">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Border
+                            Height="360"
+                            Background="Black"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8">
+                            <MediaPlayerElement
+                                x:Name="PreparedMediaPlayerElement"
+                                AreTransportControlsEnabled="True"
+                                AutoPlay="False">
+                                <MediaPlayerElement.TransportControls>
+                                    <MediaTransportControls ShowAndHideAutomatically="False" />
+                                </MediaPlayerElement.TransportControls>
+                            </MediaPlayerElement>
+                        </Border>
+                        <StackPanel Grid.Row="1" Margin="0,12,0,0" Spacing="4">
+                            <Grid ColumnSpacing="18">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock FontWeight="SemiBold" Text="Proxy target time" />
+                                <TextBlock
+                                    x:Name="PreparedMediaTargetTimestampText"
+                                    Grid.Column="1"
+                                    FontFamily="Consolas"
+                                    Text="00:00:00.000" />
+                            </Grid>
+                            <Grid ColumnSpacing="18">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock FontWeight="SemiBold" Text="Approximate source PTS" />
+                                <TextBlock
+                                    x:Name="PreparedMediaSourceTimestampText"
+                                    Grid.Column="1"
+                                    FontFamily="Consolas"
+                                    Text="—" />
+                            </Grid>
+                            <TextBlock
+                                Opacity="0.68"
+                                Text="The source timestamp is an affine approximation: source PTS ≈ proxy target time + stored source origin. The 30 fps proxy can select, duplicate, or omit source frames; it is not exact source-frame lineage."
+                                TextWrapping="Wrap" />
+                            <TextBlock
+                                x:Name="PreparedMediaReviewStatusText"
+                                Margin="0,5,0,0"
+                                Text="Select a prepared asset to verify and load its playback proxy."
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+                </Grid>
+            </ScrollViewer>
 
             <ScrollViewer
                 x:Name="AddProfileView"

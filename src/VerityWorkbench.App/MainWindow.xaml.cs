@@ -48,6 +48,7 @@ public sealed partial class MainWindow : Window
         ProfilesList.ItemsSource = _profiles;
         TruthfulVideosList.ItemsSource = _truthfulVideos;
         DeceptionVideosList.ItemsSource = _deceptionVideos;
+        InitializePreparedMediaReview();
 
         var localDataRoot = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var catalogPath = Path.Combine(localDataRoot, "VerityWorkbench", "profile-catalog.sqlite");
@@ -200,6 +201,7 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
+        DisposePreparedMediaReview();
         if (_processingCanBeCancelled)
         {
             _activeProcessingCancellation?.Cancel();
@@ -3171,6 +3173,7 @@ public sealed partial class MainWindow : Window
 
     private void ShowMainView()
     {
+        ResetPreparedMediaReviewState(showMainView: false);
         AddProfileView.Visibility = Visibility.Collapsed;
         MainView.Visibility = Visibility.Visible;
         _editingProfile = null;
@@ -3185,6 +3188,13 @@ public sealed partial class MainWindow : Window
         ProcessDataButton.IsEnabled = _profileStorageReady
             && !processingInThisWindow
             && selected?.CanProcessData == true;
+        ReviewPreparedMediaButton.IsEnabled = _profileStorageReady
+            && !processingInThisWindow
+            && !_preparedMediaReviewIsOpen
+            && string.Equals(
+                selected?.Readiness,
+                ProfileReadiness.MediaPrepared.ToString(),
+                StringComparison.Ordinal);
         CancelProcessingButton.IsEnabled = processingInThisWindow && _processingCanBeCancelled;
         RefreshProfilesButton.IsEnabled = _profileStorageReady && !processingInThisWindow;
     }

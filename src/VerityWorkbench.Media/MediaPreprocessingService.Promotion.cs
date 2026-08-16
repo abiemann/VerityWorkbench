@@ -137,7 +137,8 @@ public sealed partial class MediaPreprocessingService
             throw;
         }
         catch (Exception exception) when (
-            exception is ArgumentException
+            exception is MediaIntegrityException
+                or ArgumentException
                 or InvalidDataException
                 or FileNotFoundException
                 or DirectoryNotFoundException
@@ -153,6 +154,94 @@ public sealed partial class MediaPreprocessingService
             return new(
                 MediaPreparedVerificationState.OperationalFailure,
                 "The committed prepared-media bundle could not be read. Its integrity state was not changed.");
+        }
+    }
+
+    /// <summary>
+    /// Verifies the complete committed bundle and returns the exact proxy handle
+    /// whose bytes were checked. The open handle denies write and delete sharing,
+    /// so the consumer cannot be redirected to replacement bytes after verification.
+    /// </summary>
+    public async Task<PreparedMediaProxyOpenResult> OpenVerifiedProxyAsync(
+        ProfileWorkspaceLayout layout,
+        MediaPreprocessingResult committed,
+        CancellationToken cancellationToken = default)
+    {
+        FileStream? proxyStream = null;
+        try
+        {
+            ValidateLayout(layout);
+            ArgumentNullException.ThrowIfNull(committed);
+            var preparedDirectory = ValidatePreparedDirectoryPath(
+                layout,
+                committed,
+                requireExists: true);
+            var proxyPath = ResolveRelativePath(
+                layout,
+                committed.ProxyWorkspaceRelativePath,
+                "The prepared proxy path escapes Media.");
+            var proxyAttributes = File.GetAttributes(proxyPath);
+            if ((proxyAttributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+            {
+                throw new InvalidDataException(
+                    "The prepared proxy must be a regular file inside the prepared-media bundle.");
+            }
+
+            proxyStream = new FileStream(
+                proxyPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                CopyBufferSize,
+                FileOptions.Asynchronous | FileOptions.RandomAccess);
+            await VerifyOpenProxyStreamAsync(
+                    proxyStream,
+                    committed.ProxySha256,
+                    committed.ProxyByteLength,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            // Verify the complete bundle while the exact proxy is locked against
+            // write/delete replacement. This also repeats structural/reparse checks
+            // after the handle is open.
+            await VerifyBundleDirectoryAsync(preparedDirectory, committed, cancellationToken)
+                .ConfigureAwait(false);
+            proxyStream.Position = 0;
+            var lease = new PreparedMediaProxyLease(proxyStream);
+            proxyStream = null;
+            return new(MediaPreparedVerificationState.Verified, lease, null);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is MediaIntegrityException
+                or ArgumentException
+                or InvalidDataException
+                or FileNotFoundException
+                or DirectoryNotFoundException
+                or InvalidOperationException)
+        {
+            return new(
+                MediaPreparedVerificationState.IntegrityMismatch,
+                Lease: null,
+                "The committed prepared-media bundle is missing, unsafe, or no longer matches its recorded integrity metadata.");
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            return new(
+                MediaPreparedVerificationState.OperationalFailure,
+                Lease: null,
+                "The committed prepared-media bundle could not be read. Its integrity state was not changed.");
+        }
+        finally
+        {
+            if (proxyStream is not null)
+            {
+                await proxyStream.DisposeAsync().ConfigureAwait(false);
+            }
         }
     }
 
@@ -390,6 +479,36 @@ public sealed partial class MediaPreprocessingService
         return Convert.ToHexStringLower(await System.Security.Cryptography.SHA256.HashDataAsync(
             stream,
             cancellationToken));
+    }
+
+    private static async Task VerifyOpenProxyStreamAsync(
+        FileStream stream,
+        string expectedSha256,
+        long expectedByteLength,
+        CancellationToken cancellationToken)
+    {
+        if (!IsLowercaseSha256(expectedSha256) || expectedByteLength <= 0)
+        {
+            throw new InvalidDataException(
+                "The prepared proxy has invalid integrity metadata.");
+        }
+
+        if (!stream.CanRead || !stream.CanSeek || stream.Length != expectedByteLength)
+        {
+            throw new InvalidDataException(
+                "The prepared proxy is missing or changed length.");
+        }
+
+        stream.Position = 0;
+        var currentSha256 = Convert.ToHexStringLower(
+            await System.Security.Cryptography.SHA256.HashDataAsync(stream, cancellationToken)
+                .ConfigureAwait(false));
+        if (!string.Equals(currentSha256, expectedSha256, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("The prepared proxy changed hash.");
+        }
+
+        stream.Position = 0;
     }
 
     private static string ValidateStagedDirectory(

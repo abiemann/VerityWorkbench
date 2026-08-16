@@ -183,7 +183,7 @@ public sealed class LocalMediaStagingServiceTests
             outsideDirectory,
             outsideFile);
 
-        await Assert.ThrowsAsync<IOException>(() =>
+        await Assert.ThrowsAnyAsync<IOException>(() =>
             new LocalMediaStagingService().PromoteAsync(
                 workspace.Layout,
                 forged,
@@ -350,6 +350,96 @@ public sealed class LocalMediaStagingServiceTests
             promoted.WorkspaceRelativeOriginalPath,
             promoted.Sha256,
             promoted.ByteLength));
+    }
+
+    [Fact]
+    public async Task ExistingAssetStateVerificationDistinguishesIntegrityMutation()
+    {
+        using var workspace = new TestWorkspace();
+        var source = workspace.CreateSource("typed-verify.mp4", [1, 2, 3, 4, 5]);
+        var service = new LocalMediaStagingService();
+        var stagedJob = await service.StageAsync(
+            workspace.Layout,
+            Guid.NewGuid(),
+            JobTime,
+            [new(Guid.NewGuid(), source)]);
+        var promoted = await service.PromoteAsync(
+            workspace.Layout,
+            Assert.Single(stagedJob.Items),
+            "typed-verify",
+            "typed-verify.mp4",
+            Guid.NewGuid());
+        service.CommitPromotion(workspace.Layout, promoted);
+
+        var verified = await service.VerifyExistingAssetStateAsync(
+            workspace.Layout,
+            promoted.AssetId,
+            promoted.WorkspaceRelativeOriginalPath,
+            promoted.Sha256,
+            promoted.ByteLength);
+        Assert.Equal(LocalMediaAssetVerificationState.Verified, verified.State);
+
+        await File.WriteAllBytesAsync(promoted.OriginalFilePath, [5, 4, 3, 2, 1]);
+        var changed = await service.VerifyExistingAssetStateAsync(
+            workspace.Layout,
+            promoted.AssetId,
+            promoted.WorkspaceRelativeOriginalPath,
+            promoted.Sha256,
+            promoted.ByteLength);
+
+        Assert.Equal(LocalMediaAssetVerificationState.IntegrityMismatch, changed.State);
+        Assert.DoesNotContain(workspace.Root, changed.FailureReason!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ExistingAssetStateVerificationKeepsSharingFailureOperational()
+    {
+        using var workspace = new TestWorkspace();
+        var source = workspace.CreateSource("locked-verify.mp4", [1, 2, 3, 4, 5]);
+        var service = new LocalMediaStagingService();
+        var stagedJob = await service.StageAsync(
+            workspace.Layout,
+            Guid.NewGuid(),
+            JobTime,
+            [new(Guid.NewGuid(), source)]);
+        var promoted = await service.PromoteAsync(
+            workspace.Layout,
+            Assert.Single(stagedJob.Items),
+            "locked-verify",
+            "locked-verify.mp4",
+            Guid.NewGuid());
+        service.CommitPromotion(workspace.Layout, promoted);
+        await using var exclusiveLock = new FileStream(
+            promoted.OriginalFilePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.None);
+
+        var result = await service.VerifyExistingAssetStateAsync(
+            workspace.Layout,
+            promoted.AssetId,
+            promoted.WorkspaceRelativeOriginalPath,
+            promoted.Sha256,
+            promoted.ByteLength);
+
+        Assert.Equal(LocalMediaAssetVerificationState.OperationalFailure, result.State);
+        Assert.DoesNotContain(workspace.Root, result.FailureReason!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ExistingAssetStateVerificationClassifiesEscapingPathAsIntegrityMismatch()
+    {
+        using var workspace = new TestWorkspace();
+
+        var result = await new LocalMediaStagingService().VerifyExistingAssetStateAsync(
+            workspace.Layout,
+            Guid.NewGuid(),
+            "../outside/original.mp4",
+            new string('a', 64),
+            1);
+
+        Assert.Equal(LocalMediaAssetVerificationState.IntegrityMismatch, result.State);
+        Assert.DoesNotContain(workspace.Root, result.FailureReason!, StringComparison.OrdinalIgnoreCase);
     }
 
     private const int CopySizedPayload = 3 * 128 * 1024;

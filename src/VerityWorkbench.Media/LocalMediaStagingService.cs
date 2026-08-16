@@ -337,6 +337,56 @@ public sealed class LocalMediaStagingService
     }
 
     /// <summary>
+    /// Classifies immutable-asset verification without exposing a workspace path.
+    /// Missing, changed, malformed, or structurally unsafe media is an integrity
+    /// mismatch; genuine access and sharing failures remain operational.
+    /// </summary>
+    public async Task<LocalMediaAssetVerificationResult> VerifyExistingAssetStateAsync(
+        ProfileWorkspaceLayout layout,
+        Guid assetId,
+        string workspaceRelativeOriginalPath,
+        string sha256,
+        long byteLength,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await VerifyExistingAssetAsync(
+                    layout,
+                    assetId,
+                    workspaceRelativeOriginalPath,
+                    sha256,
+                    byteLength,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return new(LocalMediaAssetVerificationState.Verified, null);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is MediaIntegrityException
+                or ArgumentException
+                or InvalidDataException
+                or FileNotFoundException
+                or DirectoryNotFoundException
+                or InvalidOperationException)
+        {
+            return new(
+                LocalMediaAssetVerificationState.IntegrityMismatch,
+                "The registered media asset is missing, unsafe, or no longer matches its recorded integrity metadata.");
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            return new(
+                LocalMediaAssetVerificationState.OperationalFailure,
+                "The registered media asset could not be read. Its integrity state was not changed.");
+        }
+    }
+
+    /// <summary>
     /// Reconciles only journals whose jobs are known to be terminal or stale.
     /// Fresh jobs from another app window must not be included in eligibleJobIds.
     /// </summary>
@@ -1150,7 +1200,8 @@ public sealed class LocalMediaStagingService
                 var attributes = File.GetAttributes(entry);
                 if ((attributes & FileAttributes.ReparsePoint) != 0)
                 {
-                    throw new IOException("Reparse points are not allowed inside profile media boundaries.");
+                    throw new InvalidDataException(
+                        "Reparse points are not allowed inside profile media boundaries.");
                 }
 
                 if ((attributes & FileAttributes.Directory) != 0)
@@ -1194,7 +1245,8 @@ public sealed class LocalMediaStagingService
         var attributes = File.GetAttributes(path);
         if ((attributes & FileAttributes.ReparsePoint) != 0)
         {
-            throw new IOException("Reparse points are not allowed inside profile media boundaries.");
+            throw new InvalidDataException(
+                "Reparse points are not allowed inside profile media boundaries.");
         }
     }
 
@@ -1218,7 +1270,7 @@ public sealed class LocalMediaStagingService
             || relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
             || relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal))
         {
-            throw new IOException(error);
+            throw new MediaIntegrityException(error);
         }
 
         return normalizedCandidate;
@@ -1229,7 +1281,7 @@ public sealed class LocalMediaStagingService
         var actualParent = Directory.GetParent(Path.TrimEndingDirectorySeparator(child));
         if (actualParent is null || !PathsEqual(parent, actualParent.FullName))
         {
-            throw new IOException(error);
+            throw new MediaIntegrityException(error);
         }
     }
 

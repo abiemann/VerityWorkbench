@@ -222,6 +222,104 @@ public sealed class MediaPreprocessingServiceTests
         Assert.DoesNotContain(workspace.Root, result.FailureReason!, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task OpenVerifiedProxyReturnsTheHashedHandleAndHoldsItsWriteLockUntilDisposed()
+    {
+        using var workspace = new TestWorkspace();
+        var service = new MediaPreprocessingService();
+        var staged = CreateSyntheticStagedResult(workspace);
+        var promoted = await service.PromoteAsync(workspace.Layout, staged);
+        service.ConfirmPromotion(workspace.Layout, promoted);
+        var proxyPath = Path.Combine(promoted.PreparedDirectoryPath, "proxy.mp4");
+
+        var result = await service.OpenVerifiedProxyAsync(workspace.Layout, promoted.Output);
+
+        Assert.True(result.IsOpen);
+        var lease = Assert.IsType<PreparedMediaProxyLease>(result.Lease);
+        Assert.Equal(0, lease.Stream.Position);
+        var bytes = new byte[5];
+        Assert.Equal(bytes.Length, await lease.Stream.ReadAsync(bytes));
+        Assert.Equal("proxy", Encoding.UTF8.GetString(bytes));
+        Assert.Throws<IOException>(() =>
+            File.Open(proxyPath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite));
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Throws<IOException>(() => File.Delete(proxyPath));
+        }
+
+        lease.Dispose();
+        using (File.Open(
+                   proxyPath,
+                   FileMode.Open,
+                   FileAccess.Write,
+                   FileShare.ReadWrite))
+        {
+        }
+
+        File.Delete(proxyPath);
+        Assert.False(File.Exists(proxyPath));
+    }
+
+    [Fact]
+    public async Task OpenVerifiedProxyClassifiesAnExistingWriterAsOperationalFailure()
+    {
+        using var workspace = new TestWorkspace();
+        var service = new MediaPreprocessingService();
+        var staged = CreateSyntheticStagedResult(workspace);
+        var promoted = await service.PromoteAsync(workspace.Layout, staged);
+        service.ConfirmPromotion(workspace.Layout, promoted);
+        await using var exclusiveLock = new FileStream(
+            Path.Combine(promoted.PreparedDirectoryPath, "proxy.mp4"),
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.None);
+
+        var result = await service.OpenVerifiedProxyAsync(workspace.Layout, promoted.Output);
+
+        Assert.Equal(MediaPreparedVerificationState.OperationalFailure, result.State);
+        Assert.Null(result.Lease);
+        Assert.DoesNotContain(workspace.Root, result.FailureReason!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task OpenVerifiedProxyClassifiesDirectoryAtProxyPathAsIntegrityMismatch()
+    {
+        using var workspace = new TestWorkspace();
+        var service = new MediaPreprocessingService();
+        var staged = CreateSyntheticStagedResult(workspace);
+        var promoted = await service.PromoteAsync(workspace.Layout, staged);
+        service.ConfirmPromotion(workspace.Layout, promoted);
+        var proxyPath = Path.Combine(promoted.PreparedDirectoryPath, "proxy.mp4");
+        File.Delete(proxyPath);
+        Directory.CreateDirectory(proxyPath);
+
+        var result = await service.OpenVerifiedProxyAsync(workspace.Layout, promoted.Output);
+
+        Assert.Equal(MediaPreparedVerificationState.IntegrityMismatch, result.State);
+        Assert.Null(result.Lease);
+        Assert.DoesNotContain(workspace.Root, result.FailureReason!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task OpenVerifiedProxyClassifiesEscapingPreparedPathAsIntegrityMismatch()
+    {
+        using var workspace = new TestWorkspace();
+        var service = new MediaPreprocessingService();
+        var staged = CreateSyntheticStagedResult(workspace);
+        var promoted = await service.PromoteAsync(workspace.Layout, staged);
+        service.ConfirmPromotion(workspace.Layout, promoted);
+        var forged = promoted.Output with
+        {
+            ProxyWorkspaceRelativePath = "../outside.mp4",
+        };
+
+        var result = await service.OpenVerifiedProxyAsync(workspace.Layout, forged);
+
+        Assert.Equal(MediaPreparedVerificationState.IntegrityMismatch, result.State);
+        Assert.Null(result.Lease);
+        Assert.DoesNotContain(workspace.Root, result.FailureReason!, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static StagedMediaPreprocessingResult CreateSyntheticStagedResult(TestWorkspace workspace)
     {
         var jobId = Guid.NewGuid();
