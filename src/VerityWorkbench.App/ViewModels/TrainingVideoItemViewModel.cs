@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using VerityWorkbench.Core.Profiles;
@@ -8,8 +9,12 @@ public sealed class TrainingVideoItemViewModel : INotifyPropertyChanged
 {
     private string _recordingDateLabel = string.Empty;
     private bool _isArchived;
+    private RecordingDependencyGroupOptionViewModel _selectedRecordingDependencyGroup;
 
-    public TrainingVideoItemViewModel(string fullPath, TrainingCondition condition)
+    public TrainingVideoItemViewModel(
+        string fullPath,
+        TrainingCondition condition,
+        ObservableCollection<RecordingDependencyGroupOptionViewModel> recordingDependencyGroupOptions)
         : this(
             Guid.NewGuid(),
             fullPath,
@@ -17,7 +22,9 @@ public sealed class TrainingVideoItemViewModel : INotifyPropertyChanged
             string.Empty,
             isArchived: false,
             isPersisted: false,
-            mediaAssetId: null)
+            mediaAssetId: null,
+            recordingDependencyGroupId: null,
+            recordingDependencyGroupOptions)
     {
     }
 
@@ -28,7 +35,9 @@ public sealed class TrainingVideoItemViewModel : INotifyPropertyChanged
         string recordingDateLabel,
         bool isArchived,
         bool isPersisted,
-        Guid? mediaAssetId)
+        Guid? mediaAssetId,
+        Guid? recordingDependencyGroupId,
+        ObservableCollection<RecordingDependencyGroupOptionViewModel> recordingDependencyGroupOptions)
     {
         Id = id;
         FullPath = Path.GetFullPath(fullPath);
@@ -38,6 +47,12 @@ public sealed class TrainingVideoItemViewModel : INotifyPropertyChanged
         _isArchived = isArchived;
         IsPersisted = isPersisted;
         MediaAssetId = mediaAssetId;
+        RecordingDependencyGroupOptions = recordingDependencyGroupOptions;
+        _selectedRecordingDependencyGroup = recordingDependencyGroupOptions.FirstOrDefault(option =>
+                option.Id == recordingDependencyGroupId)
+            ?? throw new ArgumentException(
+                "The selected recording dependency group is not available.",
+                nameof(recordingDependencyGroupId));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -53,6 +68,27 @@ public sealed class TrainingVideoItemViewModel : INotifyPropertyChanged
     public bool IsPersisted { get; }
 
     public Guid? MediaAssetId { get; }
+
+    public ObservableCollection<RecordingDependencyGroupOptionViewModel> RecordingDependencyGroupOptions { get; }
+
+    public RecordingDependencyGroupOptionViewModel SelectedRecordingDependencyGroup
+    {
+        get => _selectedRecordingDependencyGroup;
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            if (ReferenceEquals(_selectedRecordingDependencyGroup, value))
+            {
+                return;
+            }
+
+            _selectedRecordingDependencyGroup = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(RecordingDependencyGroupId));
+        }
+    }
+
+    public Guid? RecordingDependencyGroupId => SelectedRecordingDependencyGroup.Id;
 
     public bool CanRemove => MediaAssetId is null;
 
@@ -98,7 +134,8 @@ public sealed class TrainingVideoItemViewModel : INotifyPropertyChanged
         FullPath,
         RecordingDateLabel,
         Condition,
-        IsArchived);
+        IsArchived,
+        RecordingDependencyGroupId);
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));

@@ -2,7 +2,7 @@
 
 VerityWorkbench is a local-first Windows research workbench for investigating whether person-specific facial, vocal, timing, and linguistic changes correlate with independently supported intentional deception under controlled conditions.
 
-> Early development — Milestone 6 prepared-media review. The application creates and edits persistent profiles, ingests explicitly selected local MP4s into user-selected app-managed workspaces, validates and preprocesses them, and can review each unique prepared media asset through its verified presentation-only proxy. The review shows proxy target time and an explicitly approximate affine source presentation timestamp. Media quality and model applicability remain **Not assessed**. The application does not yet transcribe speech, extract behavioral features, train a model, verify identity or authenticity, recognize language, or produce any behavioral score or probability.
+> Early development — Milestone 7 recording dependency groups. The application creates and edits persistent profiles, records user-defined capture-event dependency groups for training selections, ingests explicitly selected local MP4s into user-selected app-managed workspaces, validates and preprocesses them, and can review each unique prepared media asset through its verified presentation-only proxy. Grouping is curation metadata for future leakage-safe splitting; it does not establish an independent sample count. Media quality and model applicability remain **Not assessed**. The application does not yet transcribe speech, extract behavioral features, train a model, verify identity or authenticity, recognize language, or produce any behavioral score or probability.
 
 The authoritative scientific, product, privacy, and architecture specification is [design_doc.md](design_doc.md).
 
@@ -35,6 +35,7 @@ This repository is being implemented in small, testable slices.
 - [x] Deterministic, journaled preprocessing into a playback-only MP4 proxy, mono analysis WAV, affine timestamp map, and hashed manifest
 - [x] Persistent preprocessing results, cancellation, stale-job recovery, and crash-safe artifact promotion/reconciliation
 - [x] Prepared-media review that verifies the original and complete derivative bundle, lists unique media assets with their aggregated training labels, and plays only the presentation proxy with target and approximate source times
+- [x] Stable profile-scoped recording dependency groups with editable display labels, explicit per-selection assignment, active unassigned/conflict counts, and safe migration of existing selections to **Unassigned**
 - [ ] Declared media-quality and model-applicability thresholds; both states currently remain **Not assessed**
 - [ ] Direct-URL resumable downloads
 - [ ] Processing-folder inspection and verified cleanup controls
@@ -46,7 +47,7 @@ This repository is being implemented in small, testable slices.
 - [ ] Query Profile workflow
 - [ ] One-file encrypted `.vwpkg` import/export
 
-**Query Profile** remains deliberately unavailable. Prepared-media review is a local presentation and inspection aid, not query analysis. Edit Profile updates profile metadata and media eligibility but does not relocate workspaces, delete ingested assets, import packages, or export models. Validation, preprocessing, and review do not establish subject identity, media authenticity, spoken language, label correctness, media quality, model applicability, or suitability for model training. The playback proxy is never accepted as visual model input. No placeholder or random scoring code exists.
+**Query Profile** remains deliberately unavailable. Prepared-media review is a local presentation and inspection aid, not query analysis. Edit Profile updates profile metadata, archive state, and recording dependency-group assignments but does not relocate workspaces, delete ingested assets, import packages, or export models. Dependency groups do not change processing or readiness and do not establish an independent sample count. Validation, preprocessing, and review do not establish subject identity, media authenticity, spoken language, label correctness, media quality, model applicability, or suitability for model training. The playback proxy is never accepted as visual model input. No placeholder or random scoring code exists.
 
 ## What to install
 
@@ -61,7 +62,7 @@ D:\Tools\VerityWorkbench\FFmpeg\8.1\bin\ffprobe.exe
 
 The required build is BtbN FFmpeg-Builds `win64-lgpl-8.1`, build identity `n8.1.2-44-g7c533d0f86-20260815`, from release tag `autobuild-2026-08-15-13-02`. It reports `LGPL version 3 or later`; GPL and nonfree variants are not accepted by this validation contract.
 
-No additional install is required for Milestone 6 beyond the pinned FFmpeg/ffprobe toolchain already required for validation and preprocessing. Prepared-media review uses the app's existing Windows playback stack and the already-created `proxy.mp4`; it does not install or invoke a model. Python, GPU drivers/toolkits, Whisper, and model files are **not needed** for this milestone.
+No additional install is required for Milestone 7 beyond the pinned FFmpeg/ffprobe toolchain already required for validation and preprocessing. Recording dependency groups use the existing .NET application and SQLite database; they do not invoke FFmpeg, install a model, or add a processing phase. Python, GPU drivers/toolkits, Whisper, ONNX Runtime, and model files are **not needed** for this milestone.
 
 ### On another Windows development computer
 
@@ -181,9 +182,10 @@ The checked-in solution is expected to build with zero warnings and zero errors 
 4. Select a dedicated profile workspace folder. A drive root such as `D:\` is rejected.
 5. Optionally select a separate download-staging folder. Leave it blank to use `Downloads` inside the workspace.
 6. Add one or more explicitly selected local `.mp4` files to the appropriate training list.
-7. Enter any recording-date text you want displayed with each video, then press **Enter** to accept it and move to the next recording-label field when one is available. This is an opaque display/sort label; it is not parsed as a date and is never a model feature, label, identity, or verified capture time.
-8. Remove items or sort either list by the recording label as needed.
-9. Select **Save draft**.
+7. Create clearly named recording dependency groups and explicitly assign each selection to its capture event. Simultaneous angles, retakes, excerpts, and re-encodes from one capture event belong to the same group. A group may contain selections from both training conditions.
+8. Enter any recording-date text you want displayed with each video, then press **Enter** to accept it and move to the next recording-label field when one is available. This is an opaque display/sort label; it is not parsed as a date and is never used to infer a dependency group, model feature, label, identity, or verified capture time.
+9. Remove items or sort either list by the recording label as needed.
+10. Select **Save draft**.
 
 On success, the main view shows the profile as **Draft — not processed**. The profile reloads automatically after the app restarts. Saving a profile does not copy, change, open, or delete any source MP4.
 
@@ -193,9 +195,10 @@ Selecting **Cancel** before saving clears the form and creates no profile or wor
 
 1. Select a profile row on the main view.
 2. Select **Edit Profile**.
-3. Change the pseudonymous name or any recording label, add explicit local MP4 selections, or sort a list.
-4. Every row has **Remove**. A previously saved row also has **Archive** or **Unarchive**. Archiving here changes only local selection metadata; it does not move or delete the source MP4. Removing an unprocessed selection removes its current path/label row but never deletes the source MP4. SQLite secure deletion is enabled, but this is not a promise to purge external backups, filesystem snapshots, or storage-device history.
-5. Select **Save changes** to commit the update atomically, or **Cancel** to discard the detached working copy.
+3. Change the pseudonymous name or any recording label, add explicit local MP4 selections, create or rename recording dependency groups, explicitly change assignments, or sort a list. Existing selections first opened after the Milestone 7 schema migration are **Unassigned**; recording labels are never converted into groups automatically.
+4. Assign all simultaneous angles, retakes, excerpts, and re-encodes from one capture event to one group. The same group may span sincere-truth and intentional-deception rows because a dependency group records shared origin, not the training condition.
+5. Every row has **Remove**. A previously saved row also has **Archive** or **Unarchive**. Archiving here changes only local selection metadata; it does not move or delete the source MP4, and the row retains its dependency-group assignment for audit. Archived rows do not contribute to active group, unassigned, or conflict counts. Removing an unprocessed selection removes its current path/label row but never deletes the source MP4. SQLite secure deletion is enabled, but this is not a promise to purge external backups, filesystem snapshots, or storage-device history.
+6. Select **Save changes** to commit the update atomically, or **Cancel** to discard the detached working copy.
 
 Workspace and download roots are read-only during Edit in this milestone. Safe relocation behavior is still unresolved and will not be simulated by merely changing a stored path. Editing starts no background work. Readiness is recalculated from the active selections and their immutable media state: adding or unarchiving an unprocessed selection returns the profile to **Draft — not processed**; a metadata-only edit preserves completed validation/preprocessing; archiving a failed item can make the remaining active set eligible again.
 
@@ -267,6 +270,28 @@ Review uses only `proxy.mp4` for presentation. It does not open `original.mp4` a
 5. Close and reopen the review, then restart the app and repeat the check. The profile must still show **Media prepared — quality and applicability not assessed**.
 6. Confirm **Query Profile** remains unavailable and that no transcript, feature, model, confidence, percentage, or behavioral result is displayed or created.
 
+### Recording dependency groups
+
+A recording dependency group is a user-curated boundary around material that must remain together during future training, validation, and testing. Each group has a stable profile-scoped ID and an editable human-readable label. The label is for local organization; renaming it does not change the stable group identity.
+
+Put every simultaneous angle, retake, excerpt, clip, and re-encode derived from one capture event in the same group. A single group may span both verified sincere-truth and verified intentional-deception selections when those conditions occurred within the same dependent event. Conversely, two rows with the same recording-date label are not grouped automatically: recording labels remain opaque display/sort text and never establish experimental dependence or independence.
+
+Existing profile rows migrate safely to **Unassigned** rather than receiving a guessed group. Archived rows retain their assignment for audit but are omitted from active summary counts. The profile summary reports only the number of active assigned dependency groups, active unassigned selections, and shared-asset group conflicts. It never labels those counts as independent sessions, observations, or an effective sample size.
+
+Future training remains blocked while any active training selection is unassigned or while active selections linked to one shared media asset are assigned to different dependency groups. Resolving those metadata issues does not make the material scientifically independent or otherwise eligible; it only supplies the minimum dependency boundary needed by a future grouped training protocol.
+
+Grouping is not a processing phase. Creating, renaming, assigning, archiving, or unarchiving groups does not invoke FFmpeg, modify media or prepared artifacts, change the current ingest/validation/preprocessing readiness state, alter prepared-media review, enable **Query Profile**, assess quality/applicability, or create a feature, model, score, confidence, or percentage.
+
+### Manual test for recording dependency groups
+
+1. Build and run the app using the existing commands above. No new dependency, model, or tool installation is required.
+2. Open an existing profile in **Edit Profile**. Confirm every pre-Milestone-7 selection is shown as **Unassigned** and that its recording-date label was not used to create or select a group.
+3. Create two dependency groups, rename one, and assign selections. Put two known views or derivatives from one capture event in the same group; when appropriate, confirm one group can be selected by rows in both training conditions.
+4. Save, return to the main view, and confirm the summary reports active assigned-group and unassigned counts without calling either count an independent sample count.
+5. Reopen Edit Profile and confirm stable assignments survived the group-label edit and app restart. Archive an assigned row, save, and confirm its assignment is retained while it is omitted from active counts; unarchive it and confirm it returns to the active counts.
+6. If the test profile contains multiple active selections linked to one ingested media asset, assign those rows to different groups and confirm the profile reports a shared-asset group conflict and future training remains blocked. Assign them to one group and confirm the conflict clears.
+7. Confirm grouping changes did not alter the profile's processing/readiness text, prepared-media review behavior, quality/applicability state, or the unavailable **Query Profile** action, and created no transcript, feature, model, score, confidence, or percentage.
+
 ## Persistent local metadata
 
 Each profile's authoritative metadata database is stored inside its selected workload:
@@ -275,7 +300,7 @@ Each profile's authoritative metadata database is stored inside its selected wor
 <profile-workspace>\Profile\profile.sqlite
 ```
 
-That SQLite database contains stable pseudonymous IDs, display names, normalized workspace/download roots, full local source-file paths, recording labels, training buckets, archive/order metadata, source and derivative hashes, workspace-relative asset/artifact paths, ingest/validation/preprocessing job status and progress, normalized successful validation and preprocessing metadata/tool provenance, bounded sanitized failure states, readiness, and timestamps. It contains no video/audio bytes, raw probe JSON, raw FFmpeg output, frames, transcripts, model features, or scores.
+That SQLite database contains stable pseudonymous IDs, display names, normalized workspace/download roots, full local source-file paths, recording labels, training buckets, stable profile-scoped recording dependency-group IDs and editable labels, per-selection group assignments, archive/order metadata, source and derivative hashes, workspace-relative asset/artifact paths, ingest/validation/preprocessing job status and progress, normalized successful validation and preprocessing metadata/tool provenance, bounded sanitized failure states, readiness, and timestamps. It contains no video/audio bytes, raw probe JSON, raw FFmpeg output, frames, transcripts, model features, or scores.
 
 To find those user-selected workspaces after restart, the app keeps a minimal per-Windows-user locator catalog at:
 
@@ -296,7 +321,7 @@ The two lists are user/adjudicator-supplied enrollment buckets:
 - **Verified sincere-truth** means the target-subject material was produced under an independently supported sincere-truth condition.
 - **Verified intentional-deception** means the target-subject material was produced under an independently supported intentional-deception condition.
 
-Bucket placement is never model-generated ground truth. Factual status remains separate from intent. Mixed, ambiguous, off-condition, other-speaker, voice-over, or B-roll material must be segmented or excluded according to the design document. Multiple frames, transcript sentences, retakes, excerpts, and simultaneous camera views do not create independent training samples.
+Bucket placement is never model-generated ground truth. Factual status remains separate from intent. Mixed, ambiguous, off-condition, other-speaker, voice-over, or B-roll material must be segmented or excluded according to the design document. Multiple frames, transcript sentences, retakes, excerpts, simultaneous camera views, and re-encodes do not create independent training samples. Recording dependency groups keep known dependent rows together for future grouped splitting, but their count is not asserted to be an independent-session count.
 
 ## Workspace layout
 
@@ -335,7 +360,7 @@ A complete Add Profile workflow will accept curated training videos, an imported
 
 ### Edit Profile
 
-Edit Profile handles persistent metadata, additions, and archive/unarchive eligibility. Ingested selections cannot be removed as though they were still unprocessed; archive them to exclude them from future work. Future slices will add feature extraction/reprocessing, verified deletion and root relocation, compatible package import, and eligible-model export. Any future training change will require a new processing/model version rather than silently mutating an accepted model.
+Edit Profile handles persistent metadata, additions, archive/unarchive eligibility, and recording dependency groups. Group display labels can be renamed without changing their stable IDs, and selections can be reassigned when the user corrects their capture-event provenance. Ingested selections cannot be removed as though they were still unprocessed; archive them to exclude them from future work while retaining their group assignment for audit. Future slices will add feature extraction/reprocessing, verified deletion and root relocation, compatible package import, and eligible-model export. Any future training change will require a new processing/model version rather than silently mutating an accepted model.
 
 ### Query Profile
 

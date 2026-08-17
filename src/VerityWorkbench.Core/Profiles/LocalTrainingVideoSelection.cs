@@ -8,4 +8,5 @@ public sealed record LocalTrainingVideoSelection(
     string FilePath,
     string RecordingDateLabel,
     TrainingCondition Condition,
-    bool IsArchived = false);
+    bool IsArchived = false,
+    Guid? RecordingDependencyGroupId = null);

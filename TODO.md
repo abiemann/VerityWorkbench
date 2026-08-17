@@ -47,6 +47,20 @@
 - [ ] Add focused tests for unique-asset aggregation, complete pre-playback verification, affine time display, path containment, and state preservation across close/reopen and restart.
 - [x] Perform the README manual test on prepared media and confirm that review creates no transcript, feature, identity/language/quality/applicability result, model, score, or percentage.
 
+## Milestone 7 recording dependency groups
+
+- [x] Add stable profile-scoped recording dependency-group IDs with editable, locally unique display labels.
+- [x] Let Add/Edit Profile explicitly assign each training selection to one group; never infer an assignment from the opaque recording-date label.
+- [x] Migrate every existing training-selection row to **Unassigned** rather than guessing at historical capture-event relationships.
+- [x] Allow one group to span both training conditions because the group expresses dependence, not the sincere-truth/intentional-deception label.
+- [x] Preserve archived rows' group assignments for audit while excluding archived rows from every active group, unassigned, and conflict count.
+- [x] Detect active shared-media-asset conflicts when selections linked to one media asset are assigned to different dependency groups.
+- [x] Summarize only active assigned dependency-group, unassigned-selection, and shared-asset-conflict counts; never present any of them as an independent-session or effective-sample-size count.
+- [x] Define future training preflight to remain blocked while an active selection is unassigned or an active shared-asset group conflict exists.
+- [x] Keep grouping metadata-only: do not change processing jobs, profile readiness, prepared-media review, **Query Profile**, media quality/applicability, or create any analysis artifact.
+- [x] Require no new runtime, model, worker, or manual installation for this milestone.
+- [ ] Perform the README manual test for creation, rename stability, explicit assignment, cross-condition membership, migration, archive/unarchive counts, shared-asset conflicts, restart persistence, and unchanged processing/readiness/review/query state.
+
 ## Multilingual transcription and model-language gate
 
 - [ ] Select and license a local multilingual ASR model/runtime; do not use an English-only model for the product path.

@@ -15,7 +15,10 @@ public sealed class ProfileSummaryViewModel : INotifyPropertyChanged
         int deceptionVideoCount,
         int archivedVideoCount,
         int pendingMediaCount,
-        string readiness)
+        string readiness,
+        int activeRecordingDependencyGroupCount,
+        int activeUnassignedVideoCount,
+        int sharedAssetGroupConflictCount)
     {
         Id = id;
         DisplayName = displayName;
@@ -25,6 +28,9 @@ public sealed class ProfileSummaryViewModel : INotifyPropertyChanged
         ArchivedVideoCount = archivedVideoCount;
         PendingMediaCount = pendingMediaCount;
         Readiness = readiness;
+        ActiveRecordingDependencyGroupCount = activeRecordingDependencyGroupCount;
+        ActiveUnassignedVideoCount = activeUnassignedVideoCount;
+        SharedAssetGroupConflictCount = sharedAssetGroupConflictCount;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -44,6 +50,25 @@ public sealed class ProfileSummaryViewModel : INotifyPropertyChanged
     public int PendingMediaCount { get; }
 
     public string Readiness { get; }
+
+    public int ActiveRecordingDependencyGroupCount { get; }
+
+    public int ActiveUnassignedVideoCount { get; }
+
+    public int SharedAssetGroupConflictCount { get; }
+
+    public string RecordingDependencyGroupSummary
+    {
+        get
+        {
+            var conflicts = SharedAssetGroupConflictCount == 0
+                ? string.Empty
+                : $" · {SharedAssetGroupConflictCount} shared-asset group conflict(s)";
+            return $"{ActiveRecordingDependencyGroupCount} active recording dependency group(s) · "
+                + $"{ActiveUnassignedVideoCount} active Unassigned selection(s)"
+                + conflicts;
+        }
+    }
 
     public bool CanProcessData => Readiness is not "IngestingMedia"
         and not "ValidatingMedia"

@@ -26,6 +26,10 @@ public static class ProfileDraftValidator
         }
 
         ValidateSelections(draft.TrainingVideos, validateSourceExistence, issues);
+        ValidateRecordingDependencyGroups(
+            draft.RecordingDependencyGroups,
+            draft.TrainingVideos,
+            issues);
         ValidateImportedPackage(draft.ImportedPackagePath, issues);
 
         if (requireActiveInput
@@ -38,6 +42,74 @@ public static class ProfileDraftValidator
         }
 
         return issues;
+    }
+
+    private static void ValidateRecordingDependencyGroups(
+        IReadOnlyList<RecordingDependencyGroup> groups,
+        IReadOnlyList<LocalTrainingVideoSelection> selections,
+        ICollection<ProfileValidationIssue> issues)
+    {
+        var groupIds = new HashSet<Guid>();
+        var groupNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in groups)
+        {
+            if (group.Id == Guid.Empty)
+            {
+                issues.Add(new(
+                    "RecordingDependencyGroup.IdRequired",
+                    "A recording dependency group has no stable ID."));
+            }
+            else if (!groupIds.Add(group.Id))
+            {
+                issues.Add(new(
+                    "RecordingDependencyGroup.DuplicateId",
+                    "A recording dependency group ID appears more than once."));
+            }
+
+            if (string.IsNullOrWhiteSpace(group.DisplayName))
+            {
+                issues.Add(new(
+                    "RecordingDependencyGroup.NameRequired",
+                    "Enter a name for every recording dependency group."));
+                continue;
+            }
+
+            if (string.Equals(group.DisplayName, "Unassigned", StringComparison.OrdinalIgnoreCase))
+            {
+                issues.Add(new(
+                    "RecordingDependencyGroup.NameReserved",
+                    "Unassigned is reserved for videos without a recording dependency group."));
+                continue;
+            }
+
+            if (group.DisplayName.Length > 200
+                || !string.Equals(group.DisplayName, group.DisplayName.Trim(), StringComparison.Ordinal)
+                || group.DisplayName.Any(char.IsControl))
+            {
+                issues.Add(new(
+                    "RecordingDependencyGroup.NameInvalid",
+                    "Recording dependency group names must be trimmed, contain no control characters, and be 200 characters or fewer."));
+                continue;
+            }
+
+            if (!groupNames.Add(group.DisplayName))
+            {
+                issues.Add(new(
+                    "RecordingDependencyGroup.DuplicateName",
+                    $"Recording dependency group names must be unique: {group.DisplayName}"));
+            }
+        }
+
+        foreach (var selection in selections)
+        {
+            if (selection.RecordingDependencyGroupId == Guid.Empty
+                || selection.RecordingDependencyGroupId is Guid groupId && !groupIds.Contains(groupId))
+            {
+                issues.Add(new(
+                    "TrainingVideo.RecordingDependencyGroupUnknown",
+                    "A training video references a recording dependency group that does not exist in this profile."));
+            }
+        }
     }
 
     private static void ValidateWorkspaceRoot(

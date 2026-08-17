@@ -9,4 +9,5 @@ public sealed record StoredTrainingVideo(
     TrainingCondition Condition,
     bool IsArchived,
     int SortOrder,
-    Guid? MediaAssetId = null);
+    Guid? MediaAssetId = null,
+    Guid? RecordingDependencyGroupId = null);

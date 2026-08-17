@@ -52,7 +52,7 @@ public sealed class SqliteProfileStoreTests
         using var database = new TestDatabase();
         await database.Store.InitializeAsync();
 
-        Assert.Equal(5L, await ReadSchemaVersionAsync(database.DatabasePath));
+        Assert.Equal(6L, await ReadSchemaVersionAsync(database.DatabasePath));
     }
 
     [Fact]
@@ -63,7 +63,7 @@ public sealed class SqliteProfileStoreTests
 
         await database.Store.InitializeAsync();
 
-        Assert.Equal(5L, await ReadSchemaVersionAsync(database.DatabasePath));
+        Assert.Equal(6L, await ReadSchemaVersionAsync(database.DatabasePath));
         Assert.True(await HasIndexAsync(
             database.DatabasePath,
             "ux_profiles_workspace_root_nocase"));
@@ -488,5 +488,6 @@ public sealed class SqliteProfileStoreTests
         Assert.Equal(expected.CreatedAtUtc, actual.CreatedAtUtc);
         Assert.Equal(expected.UpdatedAtUtc, actual.UpdatedAtUtc);
         Assert.Equal(expected.TrainingVideos.OrderBy(video => video.SortOrder), actual.TrainingVideos);
+        Assert.Equal(expected.RecordingDependencyGroups, actual.RecordingDependencyGroups);
     }
 }

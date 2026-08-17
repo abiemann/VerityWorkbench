@@ -6,7 +6,7 @@ namespace VerityWorkbench.Data.Profiles;
 
 public sealed class SqliteProfileStore
 {
-    private const int SchemaVersion = 5;
+    private const int SchemaVersion = 6;
     private const int MaximumStoredErrorLength = 2_048;
     private const int MaximumProbeTextLength = 4_096;
     private const string MediaIntegrityFailureReason =
@@ -253,6 +253,54 @@ public sealed class SqliteProfileStore
         PRAGMA user_version = 5;
         """;
 
+    private const string MigrateVersion5ToVersion6Sql = """
+        CREATE TABLE recording_dependency_groups (
+            id TEXT NOT NULL PRIMARY KEY,
+            profile_id TEXT NOT NULL,
+            display_name TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 200),
+            FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+        );
+
+        CREATE UNIQUE INDEX ux_recording_dependency_groups_profile_name_nocase
+            ON recording_dependency_groups(profile_id, display_name COLLATE NOCASE);
+
+        CREATE INDEX ix_recording_dependency_groups_profile
+            ON recording_dependency_groups(profile_id, id);
+
+        ALTER TABLE training_videos
+            ADD COLUMN recording_dependency_group_id TEXT NULL
+                REFERENCES recording_dependency_groups(id) ON DELETE SET NULL;
+
+        CREATE INDEX ix_training_videos_recording_dependency_group
+            ON training_videos(recording_dependency_group_id);
+
+        CREATE TRIGGER training_videos_dependency_group_profile_insert
+        BEFORE INSERT ON training_videos
+        WHEN NEW.recording_dependency_group_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM recording_dependency_groups AS dependency_group
+              WHERE dependency_group.id = NEW.recording_dependency_group_id
+                AND dependency_group.profile_id = NEW.profile_id)
+        BEGIN
+            SELECT RAISE(ABORT, 'A recording dependency group must belong to the training-video profile.');
+        END;
+
+        CREATE TRIGGER training_videos_dependency_group_profile_update
+        BEFORE UPDATE OF recording_dependency_group_id, profile_id ON training_videos
+        WHEN NEW.recording_dependency_group_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM recording_dependency_groups AS dependency_group
+              WHERE dependency_group.id = NEW.recording_dependency_group_id
+                AND dependency_group.profile_id = NEW.profile_id)
+        BEGIN
+            SELECT RAISE(ABORT, 'A recording dependency group must belong to the training-video profile.');
+        END;
+
+        PRAGMA user_version = 6;
+        """;
+
     private readonly string _connectionString;
     private readonly SemaphoreSlim _initializationGate = new(1, 1);
     private volatile bool _initialized;
@@ -358,6 +406,17 @@ public sealed class SqliteProfileStore
                         MigrateVersion4ToVersion5Sql,
                         cancellationToken)
                     .ConfigureAwait(false);
+                version = 5;
+            }
+
+            if (version < 6)
+            {
+                await ApplyMigrationStepAsync(
+                        connection,
+                        transaction,
+                        MigrateVersion5ToVersion6Sql,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -391,6 +450,12 @@ public sealed class SqliteProfileStore
                     cancellationToken)
                 .ConfigureAwait(false);
             await InsertProfileAsync(connection, transaction, profile, cancellationToken)
+                .ConfigureAwait(false);
+            await InsertRecordingDependencyGroupsAsync(
+                    connection,
+                    transaction,
+                    profile,
+                    cancellationToken)
                 .ConfigureAwait(false);
             await InsertTrainingVideosAsync(connection, transaction, profile, cancellationToken)
                 .ConfigureAwait(false);
@@ -447,6 +512,18 @@ public sealed class SqliteProfileStore
             }
 
             await DeleteTrainingVideosAsync(connection, transaction, profile.Id, cancellationToken)
+                .ConfigureAwait(false);
+            await DeleteRecordingDependencyGroupsAsync(
+                    connection,
+                    transaction,
+                    profile.Id,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            await InsertRecordingDependencyGroupsAsync(
+                    connection,
+                    transaction,
+                    profile,
+                    cancellationToken)
                 .ConfigureAwait(false);
             await InsertTrainingVideosAsync(connection, transaction, profile, cancellationToken)
                 .ConfigureAwait(false);
@@ -506,7 +583,17 @@ public sealed class SqliteProfileStore
 
         var videos = await ReadTrainingVideosAsync(connection, profile.Id, cancellationToken)
             .ConfigureAwait(false);
-        return profile with { TrainingVideos = videos };
+        var groups = await ReadRecordingDependencyGroupsAsync(
+                connection,
+                profile.Id,
+                cancellationToken)
+            .ConfigureAwait(false);
+        ValidateLoadedRecordingDependencyGroupAssignments(profile.Id, videos, groups);
+        return profile with
+        {
+            TrainingVideos = videos,
+            RecordingDependencyGroups = groups,
+        };
     }
 
     public async Task<IReadOnlyList<StoredProfile>> GetAllAsync(
@@ -523,7 +610,17 @@ public sealed class SqliteProfileStore
         {
             var videos = await ReadTrainingVideosAsync(connection, profile.Id, cancellationToken)
                 .ConfigureAwait(false);
-            results.Add(profile with { TrainingVideos = videos });
+            var groups = await ReadRecordingDependencyGroupsAsync(
+                    connection,
+                    profile.Id,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            ValidateLoadedRecordingDependencyGroupAssignments(profile.Id, videos, groups);
+            results.Add(profile with
+            {
+                TrainingVideos = videos,
+                RecordingDependencyGroups = groups,
+            });
         }
 
         return results;
@@ -3854,7 +3951,8 @@ public sealed class SqliteProfileStore
                     training_condition,
                     is_archived,
                     sort_order,
-                    media_asset_id)
+                    media_asset_id,
+                    recording_dependency_group_id)
                 VALUES (
                     $id,
                     $profileId,
@@ -3863,7 +3961,8 @@ public sealed class SqliteProfileStore
                     $trainingCondition,
                     $isArchived,
                     $sortOrder,
-                    $mediaAssetId);
+                    $mediaAssetId,
+                    $recordingDependencyGroupId);
                 """;
             command.Parameters.AddWithValue("$id", video.Id.ToString("D"));
             command.Parameters.AddWithValue("$profileId", profile.Id.ToString("D"));
@@ -3877,8 +3976,47 @@ public sealed class SqliteProfileStore
                 video.MediaAssetId is Guid mediaAssetId
                     ? mediaAssetId.ToString("D")
                     : DBNull.Value);
+            command.Parameters.AddWithValue(
+                "$recordingDependencyGroupId",
+                video.RecordingDependencyGroupId is Guid recordingDependencyGroupId
+                    ? recordingDependencyGroupId.ToString("D")
+                    : DBNull.Value);
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private static async Task InsertRecordingDependencyGroupsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        StoredProfile profile,
+        CancellationToken cancellationToken)
+    {
+        foreach (var group in profile.RecordingDependencyGroups)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO recording_dependency_groups (id, profile_id, display_name)
+                VALUES ($id, $profileId, $displayName);
+                """;
+            command.Parameters.AddWithValue("$id", group.Id.ToString("D"));
+            command.Parameters.AddWithValue("$profileId", profile.Id.ToString("D"));
+            command.Parameters.AddWithValue("$displayName", group.DisplayName);
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task DeleteRecordingDependencyGroupsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid profileId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "DELETE FROM recording_dependency_groups WHERE profile_id = $profileId;";
+        command.Parameters.AddWithValue("$profileId", profileId.ToString("D"));
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task ValidateMediaAssetLinksAsync(
@@ -3982,6 +4120,44 @@ public sealed class SqliteProfileStore
             []);
     }
 
+    private static async Task<IReadOnlyList<StoredRecordingDependencyGroup>>
+        ReadRecordingDependencyGroupsAsync(
+            SqliteConnection connection,
+            Guid profileId,
+            CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, display_name
+            FROM recording_dependency_groups
+            WHERE profile_id = $profileId
+            ORDER BY display_name COLLATE NOCASE, id;
+            """;
+        command.Parameters.AddWithValue("$profileId", profileId.ToString("D"));
+
+        var groups = new List<StoredRecordingDependencyGroup>();
+        var groupIds = new HashSet<Guid>();
+        var groupNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var id = Guid.Parse(reader.GetString(0));
+            var displayName = reader.GetString(1);
+            if (id == Guid.Empty
+                || !groupIds.Add(id)
+                || !IsValidRecordingDependencyGroupName(displayName)
+                || !groupNames.Add(displayName))
+            {
+                throw new InvalidDataException(
+                    $"Profile '{profileId}' has invalid recording dependency group metadata.");
+            }
+
+            groups.Add(new(id, displayName));
+        }
+
+        return groups;
+    }
+
     private static async Task<IReadOnlyList<StoredTrainingVideo>> ReadTrainingVideosAsync(
         SqliteConnection connection,
         Guid profileId,
@@ -3996,7 +4172,8 @@ public sealed class SqliteProfileStore
                 training_condition,
                 is_archived,
                 sort_order,
-                media_asset_id
+                media_asset_id,
+                recording_dependency_group_id
             FROM training_videos
             WHERE profile_id = $profileId
             ORDER BY sort_order, id;
@@ -4041,10 +4218,26 @@ public sealed class SqliteProfileStore
                 condition,
                 reader.GetInt64(4) != 0,
                 reader.GetInt32(5),
-                reader.IsDBNull(6) ? null : Guid.Parse(reader.GetString(6))));
+                reader.IsDBNull(6) ? null : Guid.Parse(reader.GetString(6)),
+                reader.IsDBNull(7) ? null : Guid.Parse(reader.GetString(7))));
         }
 
         return videos;
+    }
+
+    private static void ValidateLoadedRecordingDependencyGroupAssignments(
+        Guid profileId,
+        IReadOnlyList<StoredTrainingVideo> videos,
+        IReadOnlyList<StoredRecordingDependencyGroup> groups)
+    {
+        var groupIds = groups.Select(group => group.Id).ToHashSet();
+        if (videos.Any(video =>
+                video.RecordingDependencyGroupId == Guid.Empty
+                || video.RecordingDependencyGroupId is Guid groupId && !groupIds.Contains(groupId)))
+        {
+            throw new InvalidDataException(
+                $"Profile '{profileId}' has a training video assigned to an invalid recording dependency group.");
+        }
     }
 
     private static string FormatTimestamp(DateTimeOffset timestamp)
@@ -4645,6 +4838,34 @@ public sealed class SqliteProfileStore
         ArgumentException.ThrowIfNullOrWhiteSpace(profile.WorkspaceRoot);
         ArgumentException.ThrowIfNullOrWhiteSpace(profile.Readiness);
         ArgumentNullException.ThrowIfNull(profile.TrainingVideos);
+        ArgumentNullException.ThrowIfNull(profile.RecordingDependencyGroups);
+
+        var groupIds = new HashSet<Guid>();
+        var groupNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in profile.RecordingDependencyGroups)
+        {
+            ArgumentNullException.ThrowIfNull(group);
+            if (group.Id == Guid.Empty || !groupIds.Add(group.Id))
+            {
+                throw new ArgumentException(
+                    "Every recording dependency group requires a unique, non-empty ID.",
+                    nameof(profile));
+            }
+
+            if (!IsValidRecordingDependencyGroupName(group.DisplayName))
+            {
+                throw new ArgumentException(
+                    "Recording dependency group names must not use the reserved name Unassigned, must be trimmed, contain no control characters, and be 200 characters or fewer.",
+                    nameof(profile));
+            }
+
+            if (!groupNames.Add(group.DisplayName))
+            {
+                throw new ArgumentException(
+                    $"Recording dependency group name '{group.DisplayName}' appears more than once.",
+                    nameof(profile));
+            }
+        }
 
         var videoIds = new HashSet<Guid>();
         foreach (var video in profile.TrainingVideos)
@@ -4686,6 +4907,21 @@ public sealed class SqliteProfileStore
                     "A linked media asset ID cannot be empty.",
                     nameof(profile));
             }
+
+            if (video.RecordingDependencyGroupId == Guid.Empty
+                || video.RecordingDependencyGroupId is Guid groupId && !groupIds.Contains(groupId))
+            {
+                throw new ArgumentException(
+                    "A training video references a recording dependency group outside this profile.",
+                    nameof(profile));
+            }
         }
     }
+
+    private static bool IsValidRecordingDependencyGroupName(string? displayName) =>
+        !string.IsNullOrWhiteSpace(displayName)
+        && !string.Equals(displayName, "Unassigned", StringComparison.OrdinalIgnoreCase)
+        && displayName.Length <= 200
+        && string.Equals(displayName, displayName.Trim(), StringComparison.Ordinal)
+        && !displayName.Any(char.IsControl);
 }

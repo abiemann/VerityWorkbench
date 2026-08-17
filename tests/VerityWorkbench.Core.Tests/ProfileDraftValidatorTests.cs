@@ -128,6 +128,70 @@ public sealed class ProfileDraftValidatorTests
         Assert.Empty(issues);
     }
 
+    [Fact]
+    public void Recording_dependency_group_names_are_unique_ignoring_case()
+    {
+        using var testDirectory = new TestDirectory();
+        var video = testDirectory.CreateFile("truth.mp4");
+        var draft = new ProfileDraft(
+            "Subject A",
+            testDirectory.Path,
+            null,
+            [new LocalTrainingVideoSelection(video, "one", TrainingCondition.VerifiedSincereTruth)],
+            recordingDependencyGroups:
+            [
+                new(Guid.NewGuid(), "Session Å"),
+                new(Guid.NewGuid(), "session å"),
+            ]);
+
+        var issues = ProfileDraftValidator.Validate(draft);
+
+        Assert.Contains(
+            issues,
+            issue => issue.Code == "RecordingDependencyGroup.DuplicateName");
+    }
+
+    [Fact]
+    public void Unassigned_is_reserved_for_the_null_group_selection()
+    {
+        using var testDirectory = new TestDirectory();
+        var video = testDirectory.CreateFile("truth.mp4");
+        var draft = new ProfileDraft(
+            "Subject A",
+            testDirectory.Path,
+            null,
+            [new LocalTrainingVideoSelection(video, "one", TrainingCondition.VerifiedSincereTruth)],
+            recordingDependencyGroups: [new(Guid.NewGuid(), "uNaSsIgNeD")]);
+
+        var issues = ProfileDraftValidator.Validate(draft);
+
+        Assert.Contains(
+            issues,
+            issue => issue.Code == "RecordingDependencyGroup.NameReserved");
+    }
+
+    [Fact]
+    public void Training_video_group_must_belong_to_the_profile_draft()
+    {
+        using var testDirectory = new TestDirectory();
+        var video = testDirectory.CreateFile("truth.mp4");
+        var draft = new ProfileDraft(
+            "Subject A",
+            testDirectory.Path,
+            null,
+            [new LocalTrainingVideoSelection(
+                video,
+                "one",
+                TrainingCondition.VerifiedSincereTruth,
+                RecordingDependencyGroupId: Guid.NewGuid())]);
+
+        var issues = ProfileDraftValidator.Validate(draft);
+
+        Assert.Contains(
+            issues,
+            issue => issue.Code == "TrainingVideo.RecordingDependencyGroupUnknown");
+    }
+
     private static ProfileDraft CreateDraft(
         string workspaceRoot,
         string video,

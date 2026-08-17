@@ -20,7 +20,7 @@ public sealed class SqliteProfileStoreMediaPreprocessingTests
         var restarted = new SqliteProfileStore(database.DatabasePath, createIfMissing: false);
         await restarted.InitializeAsync();
 
-        Assert.Equal(5L, await ReadSchemaVersionAsync(database.DatabasePath));
+        Assert.Equal(6L, await ReadSchemaVersionAsync(database.DatabasePath));
         Assert.True(await TableHasColumnAsync(
             database.DatabasePath,
             "media_assets",
@@ -597,6 +597,11 @@ public sealed class SqliteProfileStoreMediaPreprocessingTests
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
+            DROP TRIGGER training_videos_dependency_group_profile_insert;
+            DROP TRIGGER training_videos_dependency_group_profile_update;
+            DROP INDEX ix_training_videos_recording_dependency_group;
+            ALTER TABLE training_videos DROP COLUMN recording_dependency_group_id;
+            DROP TABLE recording_dependency_groups;
             DROP TRIGGER media_preprocessing_results_immutable_update;
             DROP TABLE media_preprocessing_job_assets;
             DROP TABLE media_preprocessing_results;

@@ -14,7 +14,7 @@
 
 **Working description:** A person-specific system for studying whether synchronized facial, vocal, and linguistic changes are associated with independently verified intentional deception under controlled, comparable conditions.
 
-**Current implementation snapshot:** Implementation Milestone 6 adds prepared-media review to the persistent local MP4 ingest, complete selected-stream validation, and deterministic preprocessing path. Each unique media asset is reviewed through its verified presentation-only proxy with aggregated training labels, proxy target time, and an explicitly approximate affine source presentation timestamp. The registered original and complete accepted prepared bundle are verified before playback. Media quality and model applicability remain `NotAssessed`; transcription, feature extraction, identity/authenticity/language assessment, training, inference, and scoring are not implemented. This implementation-slice numbering is distinct from the longer-term scientific delivery roadmap in Section 14.
+**Current implementation snapshot:** Implementation Milestone 7 adds explicit recording dependency groups to the persistent profile, local MP4 ingest, complete selected-stream validation, deterministic preprocessing, and prepared-media review path. Each group has a stable profile-scoped ID and editable display label, and each training selection can be explicitly assigned without deriving experimental structure from its recording-date label. Existing selections migrate to `Unassigned`; active assigned-group, unassigned-selection, and shared-media-asset conflict counts are reported without claiming an independent sample size. Processing/readiness, prepared-media review, and unavailable Query Profile behavior are unchanged. Media quality and model applicability remain `NotAssessed`; transcription, feature extraction, identity/authenticity/language assessment, training, inference, and scoring are not implemented. This implementation-slice numbering is distinct from the longer-term scientific delivery roadmap in Section 14.
 
 ## 1. Executive summary
 
@@ -254,7 +254,7 @@ The behavioral classifier should train only on claims with credible intent label
 
 The Add/Edit Profile UI presents two explicit training lists: **Verified truthful videos** and **Verified intentional-deception videos**. Bucket placement is a user- or adjudicator-supplied enrollment label, never model-generated ground truth. A whole MP4 may receive one of these labels only when the user has carefully curated the entire recording and can independently support that condition for every eligible target-subject answer used in training. Store the label scope, verification method, provenance, reviewer, and confidence; eligible target-subject segments may inherit the whole-video intent label. Mixed, interrupted, noncompliant, other-speaker, voice-over, B-roll, off-condition, or uncertain material must instead receive segment-level handling or remain ambiguous and excluded. Factual status remains separate from intent.
 
-The user-entered recording date is display and sorting metadata. It is stored exactly as entered and is not a behavioral feature or classifier input. Session identity and experimental grouping—not a filesystem timestamp—control leakage-safe splitting.
+The user-entered recording date is display and sorting metadata. It is stored exactly as entered and is not a behavioral feature, classifier input, or source for a recording dependency-group assignment. Session identity and explicit experimental grouping—not a recording label or filesystem timestamp—control leakage-safe splitting.
 
 ### 5.2 Required data classes
 
@@ -316,6 +316,12 @@ Data splitting must occur by complete:
 No adjacent segment from a training interview may appear in validation or testing. All normalization statistics must be fitted using training sessions only.
 
 Synchronized camera views of the same answer, repeated encodings of the same file, and clips cut from the same recording remain one experimental unit. They must stay together in the same split and must not inflate the effective sample size.
+
+Implementation Milestone 7 records the user's minimum known dependency boundary explicitly. A recording dependency group has a stable ID scoped to one profile and an editable human-readable label. Every simultaneous angle, retake, excerpt, clip, and re-encode derived from one capture event belongs to the same group. Group membership is explicit: identical recording-date labels do not create a group, different labels do not prove independence, and migration never guesses a group from existing metadata. Existing training-selection rows therefore migrate to `Unassigned`.
+
+The dependency group is independent of the outcome bucket. One group may contain both sincere-truth and intentional-deception selections when a shared capture event contains both conditions. Archived selections retain their assignment for provenance and later unarchive, but only active selections contribute to the current assigned-group, unassigned-selection, and shared-media-asset conflict counts. If active rows linked to one content-addressed media asset are assigned to different groups, the profile reports a conflict because identical media bytes cannot represent different capture events.
+
+These counts are curation diagnostics, not estimates of independent sessions, claims, observations, or effective sample size. Future training preflight remains blocked while any active selection is `Unassigned` or any active shared-media-asset group conflict exists. Passing that preflight will only show that the known grouping metadata is complete and internally consistent; it will not prove statistical independence or scientific eligibility.
 
 Whole-video labels do not make their frames, windows, transcript sentences, or answers independent. Training must weight and evaluate by session or capture event so that a longer recording cannot dominate merely because it produces more rows. Truthful and intentional-deception conditions should be paired or counterbalanced across prompt, session, source, device, topic, and camera configuration where feasible; careful curation alone does not remove source or context confounding.
 
@@ -776,6 +782,8 @@ The current preprocessing implementation stages all four required files below th
 
 Archiving a training video is a logical metadata action: the artifact and audit history remain in place, but the video is excluded from future candidate models. Permanent deletion and consent withdrawal are separate operations. Withdrawal disables any active model derived from the withdrawn data and triggers the configured deletion workflow.
 
+Recording dependency groups are profile metadata stored separately from media identity and training condition. Renaming a group preserves its stable ID. Archiving a selection preserves its assignment, while active summaries and future training preflight ignore archived rows. The grouping schema migration assigns historical rows to `Unassigned`; it never derives capture-event identity from a recording label, file path, timestamp, condition, or media hash.
+
 Each artifact manifest records:
 
 - source and upstream hashes;
@@ -932,9 +940,10 @@ The Add Profile flow:
 3. Choose an imported `.vwpkg`, curated training videos, or both.
 4. Maintain separate **Verified truthful videos** and **Verified intentional-deception videos** lists.
 5. Add local MP4s directly, choose a folder and explicitly select supported MP4s from its displayed list, or add direct HTTP(S) MP4 URLs one at a time.
-6. Enter a recording-date label for display and sorting; add, remove, and reorder items before processing.
-7. Confirm acquisition rights, subject consent, intended use, retention, and the provenance of the assigned training condition.
-8. Choose **Cancel** or **Save & Process**. Cancel discards unsaved setup. Save & Process returns to the main view while work continues in the background.
+6. Create or select recording dependency groups and explicitly assign each training selection to its capture event; one group may span both training conditions.
+7. Enter a recording-date label for display and sorting; the application never uses it to infer a dependency group. Add, remove, and reorder items before processing.
+8. Confirm acquisition rights, subject consent, intended use, retention, and the provenance of the assigned training condition.
+9. Choose **Cancel** or **Save & Process**. Cancel discards unsaved setup. Save & Process returns to the main view while work continues in the background.
 
 After decoding begins, the user selects the subject's face, confirms face-speaker association, confirms voice identity only when required by the profile policy, and reviews ambiguous tracking. Identity enrollment is built only from independently confirmed sessions. Contamination, mixed identity, or insufficient usable face/voice coverage blocks identity readiness. Changing identity-enrollment membership, the selected face/voice segments, subject confirmation, required modalities, source media, archive state, or withdrawal state creates new identity artifacts or invalidates the affected candidate; changing an intent label alone does not. Accepted identity artifacts are never silently mutated.
 
@@ -949,6 +958,7 @@ Edit Profile allows the user to:
 - add new truthful or intentional-deception MP4s and direct-media URLs;
 - remove an unprocessed selection;
 - archive or unarchive existing training videos;
+- create or rename recording dependency groups and explicitly correct per-selection assignments without changing the group's stable identity;
 - reprocess selected active training videos with the current compatible pipeline;
 - inspect media and processing folders;
 - review detected/confirmed spoken-language metadata and build separate candidates for additional languages;
@@ -968,7 +978,7 @@ The main view and profile detail view show current stage, progress, elapsed time
 
 Cancelling a processing job stops the full worker tree, closes every stream and file handle, records the cancellation, and leaves its unique processing folder intact and unlocked. No partial artifact or model is promoted. The UI exposes **Open Folder** and **Delete Processing Data**, allowing the user to inspect or later remove the bounded job directory.
 
-In implementation Milestones 5 and 6, **Process Data** deliberately performs only the next eligible processing phase per click: local ingest, then MP4 validation, then deterministic preprocessing. Preprocessing progress and result state are persisted. Cancellation terminates the pinned FFmpeg/ffprobe process tree and records no false success; restart reconciliation resolves journaled promotion state before recovering stale jobs. Prepared-media review is not another processing phase or job. A prepared profile remains explicitly **quality and applicability not assessed** until separately declared and validated gates exist.
+In implementation Milestones 5 through 7, **Process Data** deliberately performs only the next eligible processing phase per click: local ingest, then MP4 validation, then deterministic preprocessing. Preprocessing progress and result state are persisted. Cancellation terminates the pinned FFmpeg/ffprobe process tree and records no false success; restart reconciliation resolves journaled promotion state before recovering stale jobs. Prepared-media review and recording dependency-group editing are not processing phases or jobs. A prepared profile remains explicitly **quality and applicability not assessed** until separately declared and validated gates exist.
 
 ### 10.5 Prepared-media review
 
@@ -983,7 +993,17 @@ The prepared-media review flow:
 
 This view is a presentation and inspection surface only. It does not assess who appears or speaks, determine authenticity or language, measure media quality or model applicability, extract behavioral features, train or select a model, or produce an inference, confidence, score, percentage, or truth/deception result. The playback proxy remains excluded from every visual-model input contract.
 
-### 10.6 Query Profile
+### 10.6 Recording dependency groups
+
+Add/Edit Profile exposes a profile-scoped list of recording dependency groups and an explicit assignment for each training selection. Group IDs are stable; display labels are editable local metadata. Simultaneous camera angles, retakes, excerpts, and re-encodes from one capture event share one group. A group may span both training conditions because it records dependency rather than outcome. Recording-date labels remain opaque display/sort text and are never parsed or copied into group identity.
+
+The schema migration leaves historical selections `Unassigned`. Archived selections keep their group ID for audit and possible unarchive but do not contribute to active summaries. The main/profile summary reports active assigned-group count, active unassigned-selection count, and active shared-media-asset group-conflict count. It does not call a group an independent session, report an independent `N`, or infer an effective sample size.
+
+Future training cannot start while any active row is unassigned or while active rows linked to one media asset are assigned to different groups. This is a deterministic metadata preflight only. It does not assess label validity, statistical independence, subject identity, authenticity, spoken language, media quality, model applicability, or behavioral content.
+
+Creating, renaming, assigning, archiving, or unarchiving dependency groups changes no ingest, validation, preprocessing, readiness, review, or model state. It invokes no worker or model, requires no installation beyond the existing application, leaves **Query Profile** unavailable, and creates no transcript, feature, identity/language/quality/applicability result, score, probability, or percentage.
+
+### 10.7 Query Profile
 
 The Query Profile flow:
 
@@ -1034,7 +1054,7 @@ Before calibration, an eligible query may show a directional **Experimental beha
 
 The interface never labels an output `% truth`, `truth confidence`, or sentence truthfulness, and it never treats one minus a deception score as factual truth. Identity, authenticity, applicability, and behavioral values are never multiplied or collapsed into a single confidence. Transcript sentences are presentation and seek units, not automatically independent statistical observations. Output granularity must match the model's trained and validated target: a whole-video model may show only a shared video/answer result, while true per-answer or per-claim output requires aligned labels, features, grouped evaluation, and calibration at that level. Query results are never automatically recycled as training labels.
 
-### 10.7 Synchronized label and tracking review
+### 10.8 Synchronized label and tracking review
 
 - Video player with frame-accurate timeline.
 - Subject-face selection, synchronized-view grouping, and tracking review.
@@ -1044,7 +1064,7 @@ The interface never labels an output `% truth`, `truth confidence`, or sentence 
 - Face/audio/ASR confidence overlays.
 - Mandatory human review before a training label becomes eligible.
 
-### 10.8 Experiment designer
+### 10.9 Experiment designer
 
 - Select a profile and eligible independent sessions or capture groups.
 - Define outcome and inclusion criteria.
@@ -1052,7 +1072,7 @@ The interface never labels an output `% truth`, `truth confidence`, or sentence 
 - Show independent session counts rather than inflated frame, sentence, or camera-view counts.
 - Warn about class/source/topic/device/camera leakage.
 
-### 10.9 Training and validation
+### 10.10 Training and validation
 
 - Build and validate identity enrollment/templates independently of truth/deception labels.
 - Display genuine/impostor identity results, threshold versions, modality conflicts, abstention, and wrong-subject score leakage separately from behavioral-model metrics.
@@ -1064,7 +1084,7 @@ The interface never labels an output `% truth`, `truth confidence`, or sentence 
 - Generate a model card and immutable internal model version that remains deletable when authorization is withdrawn.
 - Promote a candidate atomically only after validation succeeds.
 
-### 10.10 Model import and export
+### 10.11 Model import and export
 
 The import action accepts exactly one `.vwpkg` file, displays its package type and declared lineage, validates it in a private staging job, and explains whether the resulting profile is query-only or extendable. It never runs package-provided code or downloads missing dependencies.
 
@@ -1418,6 +1438,7 @@ Failure is an informative research result. It should cause the system to remain 
 - Add/Edit Profile accepts a `.vwpkg`, curated training videos, or both, with separate verified truthful and verified intentional-deception lists.
 - Each profile uses a user-selected workspace root and a user-selected download-staging root, with inspectable named subfolders.
 - Recording date is user-entered display/sort metadata only and never a model feature or source of independence.
+- Recording dependency groups have stable profile-scoped IDs and editable labels; assignment is explicit, may span both training conditions, and is never inferred from recording labels or paths. Archived rows retain assignments but do not count active, and future training is blocked by active unassigned rows or shared-media-asset group conflicts.
 - Downloads resume when HTTP range support and strong resource validation make continuation safe.
 - Processing cancellation stops workers, closes file handles, does not promote partial results, and leaves the bounded job folder available for inspection or deletion.
 - Deterministic preprocessing creates a local playback-only MPEG-4 Part 2/AAC proxy, mono 16 kHz PCM analysis WAV, affine target-time map, and privacy-bounded manifest in an immutable `Prepared/v1_<contract-prefix>` bundle; every artifact is hashed and journaled promotion is restart-reconciled.

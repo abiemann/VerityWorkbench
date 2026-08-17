@@ -7,7 +7,8 @@ public sealed class ProfileDraft
         string workspaceRoot,
         string? downloadStagingRoot,
         IEnumerable<LocalTrainingVideoSelection> trainingVideos,
-        string? importedPackagePath = null)
+        string? importedPackagePath = null,
+        IEnumerable<RecordingDependencyGroup>? recordingDependencyGroups = null)
     {
         DisplayName = displayName;
         WorkspaceRoot = workspaceRoot;
@@ -15,6 +16,7 @@ public sealed class ProfileDraft
         TrainingVideos = trainingVideos?.ToArray()
             ?? throw new ArgumentNullException(nameof(trainingVideos));
         ImportedPackagePath = importedPackagePath;
+        RecordingDependencyGroups = recordingDependencyGroups?.ToArray() ?? [];
     }
 
     public string DisplayName { get; }
@@ -26,6 +28,8 @@ public sealed class ProfileDraft
     public IReadOnlyList<LocalTrainingVideoSelection> TrainingVideos { get; }
 
     public string? ImportedPackagePath { get; }
+
+    public IReadOnlyList<RecordingDependencyGroup> RecordingDependencyGroups { get; }
 
     public ProfileReadiness Readiness => ProfileReadiness.Draft;
 }

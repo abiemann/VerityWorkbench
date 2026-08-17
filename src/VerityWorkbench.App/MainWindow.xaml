@@ -34,7 +34,7 @@
                     VerticalAlignment="Center"
                     Background="{ThemeResource AccentFillColorSecondaryBrush}"
                     CornerRadius="16">
-                    <TextBlock Text="Milestone 6 · prepared-media review" />
+                    <TextBlock Text="Milestone 7 · recording dependency groups" />
                 </Border>
             </Grid>
         </Border>
@@ -50,11 +50,12 @@
                 <Border
                     Padding="16"
                     Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
-                    CornerRadius="8">
+                    CornerRadius="8"
+                    Visibility="Collapsed">
                     <StackPanel Spacing="4">
                         <TextBlock FontWeight="SemiBold" Text="Research limitation" />
                         <TextBlock
-                            Text="This is not a general-purpose lie detector. This milestone adds verified presentation-only playback of prepared media proxies. It does not assess identity, authenticity, language, face or voice quality, model applicability, behavior, truth, or deception."
+                            Text="This is not a general-purpose lie detector. Recording dependency groups preserve user-declared relationships between clips for future evaluation splits; they are metadata, not independent observations or model results. This milestone does not assess identity, authenticity, language, media quality, model applicability, behavior, truth, or deception."
                             TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
@@ -167,11 +168,13 @@
                                             <TextBlock FontWeight="SemiBold" Text="{Binding DisplayName}" />
                                             <TextBlock Opacity="0.65" Text="{Binding WorkspaceRoot}" TextTrimming="CharacterEllipsis" />
                                         </StackPanel>
-                                        <TextBlock
-                                            Grid.Column="1"
-                                            VerticalAlignment="Center"
-                                            Text="{Binding TrainingSummary}"
-                                            TextWrapping="Wrap" />
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="3">
+                                            <TextBlock Text="{Binding TrainingSummary}" TextWrapping="Wrap" />
+                                            <TextBlock
+                                                Opacity="0.68"
+                                                Text="{Binding RecordingDependencyGroupSummary}"
+                                                TextWrapping="Wrap" />
+                                        </StackPanel>
                                         <TextBlock
                                             Grid.Column="2"
                                             VerticalAlignment="Center"
@@ -413,6 +416,59 @@
                     </Border>
 
                     <StackPanel Spacing="10">
+                        <TextBlock FontSize="20" FontWeight="SemiBold" Text="Recording dependency groups" />
+                        <TextBlock
+                            Opacity="0.7"
+                            Text="Create one recording dependency group for clips that come from the same recording session or capture event. A group may include both training conditions. Recording date labels do not define groups. Unassigned is explicit and is allowed while curating, but it will be visible to future training eligibility checks."
+                            TextWrapping="Wrap" />
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                x:Name="NewRecordingDependencyGroupNameBox"
+                                Header="New recording dependency group name"
+                                KeyDown="NewRecordingDependencyGroupName_KeyDown"
+                                PlaceholderText="For example: Interview session 1" />
+                            <Button
+                                Grid.Column="1"
+                                VerticalAlignment="Bottom"
+                                Click="AddRecordingDependencyGroup_Click"
+                                Content="Add group" />
+                        </Grid>
+                        <ListView
+                            x:Name="RecordingDependencyGroupsList"
+                            MaxHeight="220"
+                            SelectionMode="None">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,4" ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox
+                                            Header="Recording dependency group name"
+                                            BeforeTextChanging="RecordingDependencyGroupName_BeforeTextChanging"
+                                            Text="{Binding DisplayName, Mode=TwoWay}" />
+                                        <Button
+                                            Grid.Column="1"
+                                            VerticalAlignment="Bottom"
+                                            Click="RemoveRecordingDependencyGroup_Click"
+                                            Content="Remove and unassign" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <TextBlock
+                            x:Name="RecordingDependencyGroupSummaryText"
+                            Opacity="0.72"
+                            Text="0 active recording dependency group(s) · 0 active Unassigned selection(s)"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <StackPanel Spacing="10">
                         <TextBlock FontSize="20" FontWeight="SemiBold" Text="Verified sincere-truth training videos" />
                         <TextBlock
                             Opacity="0.7"
@@ -422,13 +478,21 @@
                             <Button Click="AddTruthfulVideos_Click" Content="Add MP4 files…" />
                             <Button Click="SortTruthfulVideos_Click" Content="Sort by recording label" />
                         </StackPanel>
-                        <ListView x:Name="TruthfulVideosList" MinHeight="125" SelectionMode="Single">
+                        <ListView
+                            x:Name="TruthfulVideosList"
+                            MinHeight="125"
+                            ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                            ScrollViewer.HorizontalScrollMode="Disabled"
+                            ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                            ScrollViewer.VerticalScrollMode="Disabled"
+                            SelectionMode="None">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                     <Grid Margin="0,5" ColumnSpacing="18">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="240" />
+                                            <ColumnDefinition Width="200" />
+                                            <ColumnDefinition Width="220" />
                                             <ColumnDefinition Width="80" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
@@ -442,13 +506,22 @@
                                             KeyDown="RecordingDateLabel_KeyDown"
                                             PlaceholderText="Display/sort text only"
                                             Text="{Binding RecordingDateLabel, Mode=TwoWay}" />
-                                        <TextBlock
+                                        <ComboBox
                                             Grid.Column="2"
+                                            DataContextChanged="RecordingDependencyGroupComboBox_DataContextChanged"
+                                            Header="Recording dependency group"
+                                            ItemsSource="{Binding RecordingDependencyGroupOptions}"
+                                            Loaded="RecordingDependencyGroupComboBox_Loaded"
+                                            SelectedItem="{Binding SelectedRecordingDependencyGroup, Mode=OneWay}"
+                                            SelectionChanged="RecordingDependencyGroupSelection_Changed"
+                                            DisplayMemberPath="DisplayName" />
+                                        <TextBlock
+                                            Grid.Column="3"
                                             VerticalAlignment="Center"
                                             FontWeight="SemiBold"
                                             Text="{Binding ArchiveStatus}" />
                                         <StackPanel
-                                            Grid.Column="3"
+                                            Grid.Column="4"
                                             VerticalAlignment="Center"
                                             Orientation="Horizontal"
                                             Spacing="8">
@@ -459,7 +532,8 @@
                                             <Button
                                                 Click="ArchiveTrainingVideo_Click"
                                                 Content="{Binding ArchiveActionLabel}"
-                                                IsEnabled="{Binding CanArchive}" />
+                                                IsEnabled="{Binding CanArchive}"
+                                                MinWidth="96" />
                                         </StackPanel>
                                     </Grid>
                                 </DataTemplate>
@@ -477,13 +551,21 @@
                             <Button Click="AddDeceptionVideos_Click" Content="Add MP4 files…" />
                             <Button Click="SortDeceptionVideos_Click" Content="Sort by recording label" />
                         </StackPanel>
-                        <ListView x:Name="DeceptionVideosList" MinHeight="125" SelectionMode="Single">
+                        <ListView
+                            x:Name="DeceptionVideosList"
+                            MinHeight="125"
+                            ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                            ScrollViewer.HorizontalScrollMode="Disabled"
+                            ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                            ScrollViewer.VerticalScrollMode="Disabled"
+                            SelectionMode="None">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                     <Grid Margin="0,5" ColumnSpacing="18">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="240" />
+                                            <ColumnDefinition Width="200" />
+                                            <ColumnDefinition Width="220" />
                                             <ColumnDefinition Width="80" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
@@ -497,13 +579,22 @@
                                             KeyDown="RecordingDateLabel_KeyDown"
                                             PlaceholderText="Display/sort text only"
                                             Text="{Binding RecordingDateLabel, Mode=TwoWay}" />
-                                        <TextBlock
+                                        <ComboBox
                                             Grid.Column="2"
+                                            DataContextChanged="RecordingDependencyGroupComboBox_DataContextChanged"
+                                            Header="Recording dependency group"
+                                            ItemsSource="{Binding RecordingDependencyGroupOptions}"
+                                            Loaded="RecordingDependencyGroupComboBox_Loaded"
+                                            SelectedItem="{Binding SelectedRecordingDependencyGroup, Mode=OneWay}"
+                                            SelectionChanged="RecordingDependencyGroupSelection_Changed"
+                                            DisplayMemberPath="DisplayName" />
+                                        <TextBlock
+                                            Grid.Column="3"
                                             VerticalAlignment="Center"
                                             FontWeight="SemiBold"
                                             Text="{Binding ArchiveStatus}" />
                                         <StackPanel
-                                            Grid.Column="3"
+                                            Grid.Column="4"
                                             VerticalAlignment="Center"
                                             Orientation="Horizontal"
                                             Spacing="8">
@@ -514,7 +605,8 @@
                                             <Button
                                                 Click="ArchiveTrainingVideo_Click"
                                                 Content="{Binding ArchiveActionLabel}"
-                                                IsEnabled="{Binding CanArchive}" />
+                                                IsEnabled="{Binding CanArchive}"
+                                                MinWidth="96" />
                                         </StackPanel>
                                     </Grid>
                                 </DataTemplate>

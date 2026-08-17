@@ -26,6 +26,8 @@ public sealed partial class MainWindow : Window
     private readonly ObservableCollection<ProfileSummaryViewModel> _profiles = [];
     private readonly ObservableCollection<TrainingVideoItemViewModel> _truthfulVideos = [];
     private readonly ObservableCollection<TrainingVideoItemViewModel> _deceptionVideos = [];
+    private readonly ObservableCollection<RecordingDependencyGroupOptionViewModel> _recordingDependencyGroups = [];
+    private readonly ObservableCollection<RecordingDependencyGroupOptionViewModel> _recordingDependencyGroupOptions = [];
     private readonly LocalMediaStagingService _localMediaStagingService = new();
     private readonly MediaValidationService _mediaValidationService = new();
     private readonly MediaPreprocessingService _mediaPreprocessingService = new();
@@ -48,6 +50,8 @@ public sealed partial class MainWindow : Window
         ProfilesList.ItemsSource = _profiles;
         TruthfulVideosList.ItemsSource = _truthfulVideos;
         DeceptionVideosList.ItemsSource = _deceptionVideos;
+        RecordingDependencyGroupsList.ItemsSource = _recordingDependencyGroups;
+        ResetRecordingDependencyGroups();
         InitializePreparedMediaReview();
 
         var localDataRoot = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -2391,6 +2395,142 @@ public sealed partial class MainWindow : Window
     private void UseDefaultDownloadRoot_Click(object sender, RoutedEventArgs e) =>
         DownloadRootBox.Text = string.Empty;
 
+    private void AddRecordingDependencyGroup_Click(object sender, RoutedEventArgs e) =>
+        AddRecordingDependencyGroupFromInput();
+
+    private void NewRecordingDependencyGroupName_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != VirtualKey.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        AddRecordingDependencyGroupFromInput();
+    }
+
+    private void AddRecordingDependencyGroupFromInput()
+    {
+        var displayName = NewRecordingDependencyGroupNameBox.Text.Trim();
+        if (displayName.Length == 0)
+        {
+            StatusText.Text = "Enter a recording dependency group name before adding it.";
+            return;
+        }
+
+        if (string.Equals(displayName, "Unassigned", StringComparison.OrdinalIgnoreCase))
+        {
+            StatusText.Text = "Unassigned is reserved for videos without a recording dependency group.";
+            return;
+        }
+
+        if (_recordingDependencyGroups.Any(group => string.Equals(
+                group.DisplayName.Trim(),
+                displayName,
+                StringComparison.OrdinalIgnoreCase)))
+        {
+            StatusText.Text = "Recording dependency group names must be unique within this profile.";
+            return;
+        }
+
+        var group = new RecordingDependencyGroupOptionViewModel(Guid.NewGuid(), displayName);
+        _recordingDependencyGroups.Add(group);
+        _recordingDependencyGroupOptions.Add(group);
+        NewRecordingDependencyGroupNameBox.Text = string.Empty;
+        StatusText.Text = "Recording dependency group added to the detached draft. Save the profile to persist it.";
+        UpdateRecordingDependencyGroupDraftSummary();
+    }
+
+    private void RecordingDependencyGroupName_BeforeTextChanging(
+        TextBox sender,
+        TextBoxBeforeTextChangingEventArgs e)
+    {
+        if (!string.Equals(e.NewText.Trim(), "Unassigned", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        StatusText.Text = "Unassigned is reserved for videos without a recording dependency group.";
+    }
+
+    private void RemoveRecordingDependencyGroup_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: RecordingDependencyGroupOptionViewModel group }
+            || group.Id is null)
+        {
+            return;
+        }
+
+        var affectedVideos = AllVideos()
+            .Where(video => video.RecordingDependencyGroupId == group.Id)
+            .ToArray();
+
+        var unassignedGroup = UnassignedRecordingDependencyGroup;
+        _recordingDependencyGroups.Remove(group);
+        _recordingDependencyGroupOptions.Remove(group);
+
+        foreach (var video in affectedVideos)
+        {
+            video.SelectedRecordingDependencyGroup = unassignedGroup;
+        }
+
+        StatusText.Text = $"Recording dependency group removed from the detached draft; "
+            + $"{affectedVideos.Length} selection(s) explicitly set to Unassigned.";
+        UpdateRecordingDependencyGroupDraftSummary();
+    }
+
+    private void RecordingDependencyGroupSelection_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ComboBox { DataContext: TrainingVideoItemViewModel video }
+            && e.AddedItems.FirstOrDefault() is RecordingDependencyGroupOptionViewModel selectedGroup)
+        {
+            video.SelectedRecordingDependencyGroup = selectedGroup;
+            UpdateRecordingDependencyGroupDraftSummary();
+        }
+    }
+
+    private void RecordingDependencyGroupComboBox_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is ComboBox comboBox)
+        {
+            QueueRecordingDependencyGroupSelectionSync(comboBox);
+        }
+    }
+
+    private void RecordingDependencyGroupComboBox_DataContextChanged(
+        FrameworkElement sender,
+        DataContextChangedEventArgs e)
+    {
+        if (sender is ComboBox comboBox)
+        {
+            QueueRecordingDependencyGroupSelectionSync(comboBox);
+        }
+    }
+
+    private static void QueueRecordingDependencyGroupSelectionSync(ComboBox comboBox)
+    {
+        if (comboBox.DataContext is not TrainingVideoItemViewModel expectedVideo)
+        {
+            return;
+        }
+
+        comboBox.DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!ReferenceEquals(comboBox.DataContext, expectedVideo)
+                || !ReferenceEquals(
+                    comboBox.ItemsSource,
+                    expectedVideo.RecordingDependencyGroupOptions)
+                || !expectedVideo.RecordingDependencyGroupOptions.Contains(
+                    expectedVideo.SelectedRecordingDependencyGroup))
+            {
+                return;
+            }
+
+            comboBox.SelectedItem = expectedVideo.SelectedRecordingDependencyGroup;
+        });
+    }
+
     private async void AddTruthfulVideos_Click(object sender, RoutedEventArgs e) =>
         await AddVideosAsync(TrainingCondition.VerifiedSincereTruth);
 
@@ -2411,6 +2551,7 @@ public sealed partial class MainWindow : Window
         }
 
         CollectionFor(video.Condition).Remove(video);
+        UpdateRecordingDependencyGroupDraftSummary();
         StatusText.Text = video.IsPersisted
             ? "The saved, unprocessed selection is staged for removal. Cancel to retain it, or save changes to remove it."
             : "The new, unsaved selection was removed.";
@@ -2424,6 +2565,7 @@ public sealed partial class MainWindow : Window
         }
 
         video.IsArchived = !video.IsArchived;
+        UpdateRecordingDependencyGroupDraftSummary();
         StatusText.Text = video.IsArchived
             ? "The existing selection is staged for archiving. Save changes to persist it."
             : "The existing selection is staged for reactivation. Save changes to persist it.";
@@ -2517,11 +2659,17 @@ public sealed partial class MainWindow : Window
             .Concat(_deceptionVideos)
             .Select(video => video.ToSelection())
             .ToArray();
+        var recordingDependencyGroups = _recordingDependencyGroups
+            .Select(group => new RecordingDependencyGroup(
+                group.Id!.Value,
+                group.DisplayName.Trim()))
+            .ToArray();
         var draft = new ProfileDraft(
             ProfileNameBox.Text.Trim(),
             WorkspaceRootBox.Text,
             string.IsNullOrWhiteSpace(DownloadRootBox.Text) ? null : DownloadRootBox.Text,
-            selections);
+            selections,
+            recordingDependencyGroups: recordingDependencyGroups);
 
         var issues = ProfileDraftValidator
             .Validate(
@@ -2587,7 +2735,10 @@ public sealed partial class MainWindow : Window
                 readiness.ToString(),
                 editingProfile?.CreatedAtUtc ?? now,
                 now,
-                storedVideos);
+                storedVideos,
+                recordingDependencyGroups
+                    .Select(group => new StoredRecordingDependencyGroup(group.Id, group.DisplayName))
+                    .ToArray());
 
             if (operationMode == EditorMode.Edit)
             {
@@ -2877,6 +3028,7 @@ public sealed partial class MainWindow : Window
             }
 
             var activeVideos = profile.TrainingVideos.Where(video => !video.IsArchived).ToArray();
+            var recordingDependencySummary = RecordingDependencyGroupSummaryBuilder.Create(profile);
             var summary = new ProfileSummaryViewModel(
                 profile.Id,
                 profile.DisplayName,
@@ -2885,7 +3037,10 @@ public sealed partial class MainWindow : Window
                 activeVideos.Count(video => video.Condition == TrainingCondition.VerifiedIntentionalDeception),
                 profile.TrainingVideos.Count(video => video.IsArchived),
                 activeVideos.Count(video => video.MediaAssetId is null),
-                profile.Readiness);
+                profile.Readiness,
+                recordingDependencySummary.ActiveAssignedGroupCount,
+                recordingDependencySummary.ActiveUnassignedVideoCount,
+                recordingDependencySummary.Conflicts.Count);
             _profiles.Add(summary);
 
             if (summary.Id == profileToSelect)
@@ -3010,6 +3165,15 @@ public sealed partial class MainWindow : Window
         WorkspaceRootBox.Text = profile.WorkspaceRoot;
         DownloadRootBox.Text = profile.DownloadStagingRoot ?? string.Empty;
 
+        foreach (var storedGroup in profile.RecordingDependencyGroups)
+        {
+            var group = new RecordingDependencyGroupOptionViewModel(
+                storedGroup.Id,
+                storedGroup.DisplayName);
+            _recordingDependencyGroups.Add(group);
+            _recordingDependencyGroupOptions.Add(group);
+        }
+
         foreach (var storedVideo in profile.TrainingVideos.OrderBy(video => video.SortOrder))
         {
             CollectionFor(storedVideo.Condition).Add(new TrainingVideoItemViewModel(
@@ -3019,8 +3183,12 @@ public sealed partial class MainWindow : Window
                 storedVideo.RecordingDateLabel,
                 storedVideo.IsArchived,
                 isPersisted: true,
-                storedVideo.MediaAssetId));
+                storedVideo.MediaAssetId,
+                storedVideo.RecordingDependencyGroupId,
+                _recordingDependencyGroupOptions));
         }
+
+        UpdateRecordingDependencyGroupDraftSummary();
     }
 
     private void ConfigureEditorForAdd()
@@ -3057,7 +3225,8 @@ public sealed partial class MainWindow : Window
                 video.Condition,
                 video.IsArchived,
                 sortOrder++,
-                video.MediaAssetId))
+                video.MediaAssetId,
+                video.RecordingDependencyGroupId))
             .ToArray();
     }
 
@@ -3132,9 +3301,14 @@ public sealed partial class MainWindow : Window
                 continue;
             }
 
-            var item = new TrainingVideoItemViewModel(canonicalPath, condition);
+            var item = new TrainingVideoItemViewModel(
+                canonicalPath,
+                condition,
+                _recordingDependencyGroupOptions);
             CollectionFor(condition).Add(item);
         }
+
+        UpdateRecordingDependencyGroupDraftSummary();
 
         StatusText.Text = skippedDuplicate
             ? "Selected MP4 files were added; duplicate paths were skipped."
@@ -3143,6 +3317,47 @@ public sealed partial class MainWindow : Window
 
     private IEnumerable<TrainingVideoItemViewModel> AllVideos() =>
         _truthfulVideos.Concat(_deceptionVideos);
+
+    private RecordingDependencyGroupOptionViewModel UnassignedRecordingDependencyGroup =>
+        _recordingDependencyGroupOptions.First(group => group.Id is null);
+
+    private void ResetRecordingDependencyGroups()
+    {
+        _recordingDependencyGroups.Clear();
+        _recordingDependencyGroupOptions.Clear();
+        _recordingDependencyGroupOptions.Add(new(null, "Unassigned"));
+        NewRecordingDependencyGroupNameBox.Text = string.Empty;
+        UpdateRecordingDependencyGroupDraftSummary();
+    }
+
+    private void UpdateRecordingDependencyGroupDraftSummary()
+    {
+        var activeVideos = AllVideos().Where(video => !video.IsArchived).ToArray();
+        var activeAssignedGroupCount = activeVideos
+            .Where(video => video.RecordingDependencyGroupId.HasValue)
+            .Select(video => video.RecordingDependencyGroupId!.Value)
+            .Distinct()
+            .Count();
+        var activeUnassignedCount = activeVideos.Count(video =>
+            !video.RecordingDependencyGroupId.HasValue);
+        var sharedAssetConflictCount = activeVideos
+            .Where(video => video.MediaAssetId.HasValue
+                && video.RecordingDependencyGroupId.HasValue)
+            .GroupBy(video => video.MediaAssetId!.Value)
+            .Count(group => group
+                .Select(video => video.RecordingDependencyGroupId!.Value)
+                .Distinct()
+                .Skip(1)
+                .Any());
+        var conflicts = sharedAssetConflictCount == 0
+            ? string.Empty
+            : $" · {sharedAssetConflictCount} shared-asset group conflict(s); resolve before future training";
+
+        RecordingDependencyGroupSummaryText.Text =
+            $"{activeAssignedGroupCount} active recording dependency group(s) · "
+            + $"{activeUnassignedCount} active Unassigned selection(s)"
+            + conflicts;
+    }
 
     private ObservableCollection<TrainingVideoItemViewModel> CollectionFor(TrainingCondition condition) =>
         condition == TrainingCondition.VerifiedSincereTruth ? _truthfulVideos : _deceptionVideos;
@@ -3168,6 +3383,7 @@ public sealed partial class MainWindow : Window
         DownloadRootBox.Text = string.Empty;
         _truthfulVideos.Clear();
         _deceptionVideos.Clear();
+        ResetRecordingDependencyGroups();
         HideValidation();
     }
 
