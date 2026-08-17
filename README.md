@@ -2,7 +2,7 @@
 
 VerityWorkbench is a local-first Windows research workbench for investigating whether person-specific facial, vocal, timing, and linguistic changes correlate with independently supported intentional deception under controlled conditions.
 
-> Early development — Milestone 8 objective analysis-audio observations. After the existing ingest, validation, and preprocessing phases, the application can scan the exact hash-verified mono PCM `audio.wav` for each unique active prepared media asset and persist a versioned set of label-blind, whole-file integer observations in SQLite. These arithmetic facts are not speech, speaker, language, media-quality, model-applicability, behavioral-feature, or training results. Recording dependency groups remain curation metadata rather than an independent sample count. Media quality and model applicability remain **Not assessed**. The application does not yet transcribe speech, extract behavioral features, train a model, verify identity or authenticity, recognize language, or produce any behavioral score or probability.
+> Early development — Milestone 9 retained processing-job inspection and verified cleanup. The application preserves the outcome and audit record of every processing job while allowing a user to inspect its history, open a freshly verified retained folder, or explicitly remove only the retained folder for a completed, cancelled, failed, or interrupted job. Cleanup revalidates the selected profile, job state, exact bounded path, job marker, and filesystem boundary immediately before deletion; active or unsafe deletion targets are refused. It never deletes registered media, prepared bundles, persisted observation results, profile data, sibling jobs, or external download staging, and it does not change readiness, media quality, model applicability, review, or query state. Media quality and model applicability remain **Not assessed**. The application does not yet transcribe speech, extract behavioral features, train a model, verify identity or authenticity, recognize language, or produce any behavioral score or probability.
 
 The authoritative scientific, product, privacy, and architecture specification is [design_doc.md](design_doc.md).
 
@@ -39,7 +39,7 @@ This repository is being implemented in small, testable slices.
 - [x] Versioned managed-code inspection of each unique active prepared `audio.wav`, with immutable DB-only exact whole-file PCM observations and no windowed artifact or scientific eligibility decision
 - [ ] Declared media-quality and model-applicability thresholds; both states currently remain **Not assessed**
 - [ ] Direct-URL resumable downloads
-- [ ] Processing-folder inspection and verified cleanup controls
+- [x] Selected-profile processing history with bounded folder inspection and verified cleanup of terminal job folders while retaining the persistent audit record
 - [ ] Transcription and behavioral feature extraction
 - [ ] Local multilingual ASR, language confirmation, original-language transcripts, optional separate English translation, and compatible language-model routing
 - [ ] Training, grouped validation, calibration, and local inference
@@ -63,7 +63,7 @@ D:\Tools\VerityWorkbench\FFmpeg\8.1\bin\ffprobe.exe
 
 The required build is BtbN FFmpeg-Builds `win64-lgpl-8.1`, build identity `n8.1.2-44-g7c533d0f86-20260815`, from release tag `autobuild-2026-08-15-13-02`. It reports `LGPL version 3 or later`; GPL and nonfree variants are not accepted by this validation contract.
 
-No additional install is required for Milestone 8 beyond the pinned FFmpeg/ffprobe toolchain already required to create the prepared media bundle. The observation phase itself uses a bounded managed-code reader over the existing mono 16 kHz signed 16-bit PCM `audio.wav`; it does not invoke FFmpeg, Python, a GPU runtime, Whisper, ONNX Runtime, or any model.
+No additional install is required for Milestone 9 beyond the pinned FFmpeg/ffprobe toolchain already required by the earlier media phases. Processing-history inspection and cleanup use the existing WinUI, managed-code, SQLite, and workspace-boundary components; they do not invoke FFmpeg, Python, a GPU runtime, Whisper, ONNX Runtime, or any model.
 
 ### On another Windows development computer
 
@@ -274,6 +274,24 @@ Select **Cancel Processing** to stop the scan cooperatively. The active WAVE str
 6. Restart the app and confirm the completed observation status persists without rerunning the scan. If several active selections reference identical prepared content, confirm the progress/summary counts it once; archiving all selections for an asset removes it from active pending work without deleting its retained result.
 7. Confirm no observation-result file was created under `Prepared` or `Features` and **Query Profile** remains unavailable. Exact aggregate values, overflow bounds, malformed/truncated WAVE rejection, artifact-integrity failure, cancellation, deduplication, and restart recovery are acceptance-tested automatically against generated PCM fixtures.
 
+### Inspect and clean retained processing jobs
+
+1. Select a profile, then choose **Processing History**. The list is audit history from the selected profile's SQLite database; it shows each job's kind, outcome, timestamps, progress, bounded workspace-relative folder, and whether its retained processing data has already been cleaned.
+2. Use **Open Folder** only for an existing retained job folder. VerityWorkbench freshly reloads the job and validates that the path is the exact direct child recorded beneath that profile's `Processing` root, has the expected job identity and marker, contains no reparse-point escape, and has no unresolved promotion journal before asking Windows to open it.
+3. **Delete Processing Data** is available only for a terminal `Completed`, `Cancelled`, `Failed`, or `Interrupted` job. It asks for confirmation, reloads the database row, and repeats the complete filesystem validation immediately before deletion. `Queued` and `Running` jobs are never eligible.
+4. Successful cleanup deletes only that one retained processing-job directory, then records the cleanup time on the existing terminal audit row. The job's outcome remains terminal and visible after restart. Registered originals, prepared bundles, validation/preprocessing/observation results, profile metadata, sibling jobs, `Features`, `Models`, and external download staging are unchanged.
+5. A missing, moved, locked, mismatched, traversal, root, sibling, reparse-point, active, stale-view, or unresolved-journal target is refused without marking it cleaned. The user may inspect or retry after resolving the cause; the app never guesses that a missing directory was safely deleted.
+
+This action is bounded workspace housekeeping. It is not media repair, derivative cleanup, consent withdrawal, permanent subject-data deletion, secure erasure, or a change to any scientific result. It does not assess speech, language, identity, authenticity, quality, applicability, behavior, truth, or deception and does not enable **Query Profile**.
+
+### Manual test for processing history and verified cleanup
+
+1. Use a test profile with at least one completed job and, when practical, retained cancelled, failed, or interrupted jobs. Open **Processing History** and confirm newest jobs appear with the correct terminal outcome, progress, folder, and cleanup status.
+2. Open one existing terminal folder. Confirm Windows opens exactly that job's direct child beneath the selected profile's `Processing` directory.
+3. Choose **Delete Processing Data** for one terminal job and confirm the prompt. Verify only that job directory disappears, the audit row remains and reports its cleanup time, and a second cleanup is refused as already cleaned.
+4. Restart the app and confirm the cleaned audit status persists. Confirm profile readiness, objective-audio-observation status, recording dependency groups, prepared-media review, and unavailable **Query Profile** are unchanged.
+5. If practical, hold a file open in another terminal job folder and confirm cleanup fails safely and remains retryable. Automated tests cover active-state and stale-row races, missing or mismatched folders, traversal/root/sibling/reparse targets, unresolved promotion journals, profile isolation, and deletion of only the exact selected folder.
+
 ### Review prepared media
 
 1. Select a profile showing either pending or recorded objective audio observations while media quality and model applicability remain **Not assessed**.
@@ -373,7 +391,7 @@ Saving a valid draft creates only these fixed, human-readable top-level folders 
 
 If a separate download-staging folder is selected, that folder is also created if necessary. Later download and processing work will be confined to unique, bounded job subfolders. Folder names and paths are for human navigation only and must never become model features.
 
-Milestone 8 creates no observation-result artifact. Its immutable objective analysis-audio observation results live only in `Profile/profile.sqlite`; `Features` remains empty until a separately frozen future feature contract is implemented. A bounded `Processing` job folder may still exist for the ordinary inspectable job lifecycle, but it is not promoted or treated as an observation result.
+Milestone 8 creates no observation-result artifact. Its immutable objective analysis-audio observation results live only in `Profile/profile.sqlite`; `Features` remains empty until a separately frozen future feature contract is implemented. Milestone 9 can inspect and explicitly clean a terminal job's bounded `Processing/<job>/` directory while preserving the job row and its cleanup timestamp. Processing-folder cleanup never removes or changes an immutable result or any promoted media artifact.
 
 Do not place a workspace inside the source repository. Subject media, workspaces, processing artifacts, transcripts, numeric biometric features, and person-specific models are private local data and must never be committed.
 

@@ -54,6 +54,7 @@ public sealed partial class MainWindow : Window
         RecordingDependencyGroupsList.ItemsSource = _recordingDependencyGroups;
         ResetRecordingDependencyGroups();
         InitializePreparedMediaReview();
+        InitializeProcessingHistory();
 
         var localDataRoot = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var catalogPath = Path.Combine(localDataRoot, "VerityWorkbench", "profile-catalog.sqlite");
@@ -65,6 +66,7 @@ public sealed partial class MainWindow : Window
 
     private void AddProfile_Click(object sender, RoutedEventArgs e)
     {
+        ResetProcessingHistoryState(showMainView: false);
         ResetDraftForm();
         _editorMode = EditorMode.Add;
         _editingProfile = null;
@@ -107,6 +109,7 @@ public sealed partial class MainWindow : Window
             _editingProfile = profile;
             PopulateEditor(profile);
             ConfigureEditorForEdit();
+            ResetProcessingHistoryState(showMainView: false);
             MainView.Visibility = Visibility.Collapsed;
             AddProfileView.Visibility = Visibility.Visible;
             StatusText.Text = "Editing a detached draft. Cancel discards every staged change.";
@@ -209,6 +212,7 @@ public sealed partial class MainWindow : Window
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
         DisposePreparedMediaReview();
+        DisposeProcessingHistory();
         if (_processingCanBeCancelled)
         {
             _activeProcessingCancellation?.Cancel();
@@ -3412,6 +3416,7 @@ public sealed partial class MainWindow : Window
     private void ShowMainView()
     {
         ResetPreparedMediaReviewState(showMainView: false);
+        ResetProcessingHistoryState(showMainView: false);
         AddProfileView.Visibility = Visibility.Collapsed;
         MainView.Visibility = Visibility.Visible;
         _editingProfile = null;
@@ -3429,7 +3434,13 @@ public sealed partial class MainWindow : Window
         ReviewPreparedMediaButton.IsEnabled = _profileStorageReady
             && !processingInThisWindow
             && !_preparedMediaReviewIsOpen
+            && !_processingHistoryIsOpen
             && CanReviewPreparedMedia(selected?.Readiness);
+        ProcessingHistoryButton.IsEnabled = _profileStorageReady
+            && !processingInThisWindow
+            && !_preparedMediaReviewIsOpen
+            && !_processingHistoryIsOpen
+            && selected is not null;
         CancelProcessingButton.IsEnabled = processingInThisWindow && _processingCanBeCancelled;
         RefreshProfilesButton.IsEnabled = _profileStorageReady && !processingInThisWindow;
     }

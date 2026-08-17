@@ -13,7 +13,8 @@
 - [x] On cancellation or operational failure, terminate the external process tree, close handles, write no successful result, and restore the profile's safe derived pre-job readiness.
 - [x] Persist a registered-media integrity-failure state that survives restart, blocks further processing, preserves immutable validation provenance, and can be excluded by archiving the affected training selection.
 - [ ] Add a journaled, no-deletion repair workflow that can replace a changed or missing registered media copy from an explicitly selected source.
-- [ ] Add inspection and verified cleanup controls for retained processing-job folders and future media derivatives.
+- [x] Add inspection and verified cleanup controls for retained processing-job folders while preserving terminal audit rows.
+- [ ] Add separately verified cleanup controls for future media derivatives.
 - [ ] Add automated integration fixtures for additional supported codecs, corrupt/truncated MP4s, ambiguous/default stream combinations, cancellation during long decode, timeout/output-limit enforcement, and post-decode mutation detection.
 
 ## Milestone 5 deterministic media preprocessing
@@ -77,6 +78,21 @@
 - [x] Add generated-PCM and persistence tests for all-zero data, positive/negative values, both signed endpoints, exact count/sum/squared-sum arithmetic, RIFF chunk handling, malformed/truncated input, hash/length mismatch, label blindness, duplicate/archived selection handling, cancellation, restart recovery, and immutable conflict handling.
 - [ ] Perform the README manual test for pending/in-progress/cancel/retry/completed/restart status, unique-active-asset counting, unchanged prepared-media review, unavailable Query Profile, unchanged quality/applicability state, and absence of new workspace artifacts or scientific interpretations.
 - [ ] Before introducing an objective-observation contract v2, add an explicit version-aware result identity and migration/replacement policy; job selection and readiness must compare the requested contract instead of treating an immutable v1 row as a current result.
+
+## Milestone 9 retained processing-job inspection and verified cleanup
+
+- [x] Add a selected-profile **Processing History** view over persistent job rows without changing any job outcome or profile readiness.
+- [x] Show job kind, terminal/active state, timestamps, progress, bounded workspace-relative folder, sanitized failure text, and retained-folder cleanup status.
+- [x] Re-read the selected job immediately before every folder action and reject stale profile ownership, state, path, or cleanup status.
+- [x] Allow **Open Folder** only after validating the exact recorded direct child beneath the selected profile's `Processing` root, the expected job identity suffix, the `.job` marker, and the absence of reparse-point escapes.
+- [x] Allow **Delete Processing Data** only for `Completed`, `Cancelled`, `Failed`, or `Interrupted` jobs after explicit confirmation; always refuse `Queued` and `Running` jobs.
+- [x] Refuse cleanup while a promotion journal remains unresolved; reconciliation must finish before retained staging evidence can be discarded.
+- [x] Delete only the exact selected processing-job directory and preserve registered media, prepared bundles, persisted results, profile data, sibling jobs, `Features`, `Models`, exports/reports, and external download staging.
+- [x] Persist a nullable cleanup timestamp on the existing terminal job audit row rather than replacing its outcome with a synthetic cleaned state.
+- [x] Treat missing, locked, moved, mismatched, traversal, root, sibling, reparse-point, active, or stale-view targets as safe retryable refusals; never infer that a missing folder was cleaned.
+- [x] Keep readiness, objective-audio-observation state, recording dependency groups, prepared-media review, media quality, model applicability, and unavailable **Query Profile** unchanged.
+- [x] Require no new runtime, model, worker, tool, or manual installation.
+- [ ] Perform the README manual test for history display, exact-folder opening, terminal-only cleanup, confirmation, restart-persistent cleanup audit, locked-folder refusal, and unchanged media/result/readiness/review/query state.
 
 ## Multilingual transcription and model-language gate
 

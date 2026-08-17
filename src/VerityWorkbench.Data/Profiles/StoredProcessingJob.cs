@@ -12,4 +12,5 @@ public sealed record StoredProcessingJob(
     string WorkspaceRelativePath,
     string? Error,
     DateTimeOffset CreatedAtUtc,
-    DateTimeOffset UpdatedAtUtc);
+    DateTimeOffset UpdatedAtUtc,
+    DateTimeOffset? WorkspaceCleanedAtUtc = null);

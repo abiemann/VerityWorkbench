@@ -7,7 +7,7 @@ namespace VerityWorkbench.Data.Profiles;
 
 public sealed class SqliteProfileStore
 {
-    private const int SchemaVersion = 7;
+    private const int SchemaVersion = 8;
     private const int MaximumStoredErrorLength = 2_048;
     private const int MaximumProbeTextLength = 4_096;
     private const string MediaIntegrityFailureReason =
@@ -386,6 +386,16 @@ public sealed class SqliteProfileStore
         PRAGMA user_version = 7;
         """;
 
+    private const string MigrateVersion7ToVersion8Sql = """
+        ALTER TABLE processing_jobs
+            ADD COLUMN workspace_cleaned_utc TEXT NULL CHECK (
+                workspace_cleaned_utc IS NULL OR (
+                    state NOT IN ('Queued', 'Running')
+                    AND workspace_cleaned_utc >= updated_utc));
+
+        PRAGMA user_version = 8;
+        """;
+
     private readonly string _connectionString;
     private readonly SemaphoreSlim _initializationGate = new(1, 1);
     private volatile bool _initialized;
@@ -511,6 +521,17 @@ public sealed class SqliteProfileStore
                         connection,
                         transaction,
                         MigrateVersion6ToVersion7Sql,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                version = 7;
+            }
+
+            if (version < 8)
+            {
+                await ApplyMigrationStepAsync(
+                        connection,
+                        transaction,
+                        MigrateVersion7ToVersion8Sql,
                         cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -2396,6 +2417,52 @@ public sealed class SqliteProfileStore
         return await ReadProcessingJobsAsync(connection, profileId, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<bool> MarkProcessingJobWorkspaceCleanedAsync(
+        Guid profileId,
+        Guid jobId,
+        ProcessingJobState expectedTerminalState,
+        string expectedWorkspaceRelativePath,
+        DateTimeOffset cleanedAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateRequiredId(profileId, nameof(profileId));
+        ValidateRequiredId(jobId, nameof(jobId));
+        if (expectedTerminalState is ProcessingJobState.Queued or ProcessingJobState.Running ||
+            !Enum.IsDefined(expectedTerminalState))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(expectedTerminalState),
+                expectedTerminalState,
+                "A cleaned workspace can only be recorded for a terminal processing job.");
+        }
+
+        var normalizedExpectedPath = NormalizeBoundedWorkspaceRelativePath(
+            expectedWorkspaceRelativePath,
+            "Processing",
+            nameof(expectedWorkspaceRelativePath));
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = await OpenConfiguredConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE processing_jobs
+            SET workspace_cleaned_utc = $workspaceCleanedUtc
+            WHERE id = $id
+              AND profile_id = $profileId
+              AND state = $expectedTerminalState
+              AND state NOT IN ('Queued', 'Running')
+              AND workspace_relative_path = $expectedWorkspaceRelativePath COLLATE BINARY
+              AND workspace_cleaned_utc IS NULL
+              AND updated_utc <= $workspaceCleanedUtc;
+            """;
+        command.Parameters.AddWithValue("$id", jobId.ToString("D"));
+        command.Parameters.AddWithValue("$profileId", profileId.ToString("D"));
+        command.Parameters.AddWithValue("$expectedTerminalState", expectedTerminalState.ToString());
+        command.Parameters.AddWithValue("$expectedWorkspaceRelativePath", normalizedExpectedPath);
+        command.Parameters.AddWithValue("$workspaceCleanedUtc", FormatTimestamp(cleanedAtUtc));
+        return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) == 1;
+    }
+
     public async Task<StoredProcessingJob?> GetProcessingJobAsync(
         Guid jobId,
         CancellationToken cancellationToken = default)
@@ -2534,7 +2601,8 @@ public sealed class SqliteProfileStore
                 workspace_relative_path,
                 error,
                 created_utc,
-                updated_utc)
+                updated_utc,
+                workspace_cleaned_utc)
             VALUES (
                 $id,
                 $profileId,
@@ -2547,7 +2615,8 @@ public sealed class SqliteProfileStore
                 $workspaceRelativePath,
                 $error,
                 $createdUtc,
-                $updatedUtc);
+                $updatedUtc,
+                $workspaceCleanedUtc);
             """;
         command.Parameters.AddWithValue("$id", job.Id.ToString("D"));
         command.Parameters.AddWithValue("$profileId", job.ProfileId.ToString("D"));
@@ -2561,6 +2630,11 @@ public sealed class SqliteProfileStore
         command.Parameters.AddWithValue("$error", (object?)job.Error ?? DBNull.Value);
         command.Parameters.AddWithValue("$createdUtc", FormatTimestamp(job.CreatedAtUtc));
         command.Parameters.AddWithValue("$updatedUtc", FormatTimestamp(job.UpdatedAtUtc));
+        command.Parameters.AddWithValue(
+            "$workspaceCleanedUtc",
+            job.WorkspaceCleanedAtUtc is DateTimeOffset workspaceCleanedAtUtc
+                ? FormatTimestamp(workspaceCleanedAtUtc)
+                : DBNull.Value);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -2585,7 +2659,8 @@ public sealed class SqliteProfileStore
                 workspace_relative_path,
                 error,
                 created_utc,
-                updated_utc
+                updated_utc,
+                workspace_cleaned_utc
             FROM processing_jobs
             WHERE id = $id;
             """;
@@ -2615,7 +2690,8 @@ public sealed class SqliteProfileStore
                 workspace_relative_path,
                 error,
                 created_utc,
-                updated_utc
+                updated_utc,
+                workspace_cleaned_utc
             FROM processing_jobs
             WHERE profile_id = $profileId
             ORDER BY created_utc, id;
@@ -2652,7 +2728,8 @@ public sealed class SqliteProfileStore
                 workspace_relative_path,
                 error,
                 created_utc,
-                updated_utc
+                updated_utc,
+                workspace_cleaned_utc
             FROM processing_jobs
             WHERE state IN ('Queued', 'Running')
               AND updated_utc < $staleBeforeUtc
@@ -2711,6 +2788,30 @@ public sealed class SqliteProfileStore
             throw new InvalidDataException($"Processing job '{reader.GetString(0)}' has an invalid stored error.");
         }
 
+        var createdAtUtc = ParseTimestamp(reader.GetString(10));
+        var updatedAtUtc = ParseTimestamp(reader.GetString(11));
+        DateTimeOffset? workspaceCleanedAtUtc = null;
+        if (!reader.IsDBNull(12))
+        {
+            try
+            {
+                workspaceCleanedAtUtc = ParseTimestamp(reader.GetString(12));
+            }
+            catch (FormatException exception)
+            {
+                throw new InvalidDataException(
+                    $"Processing job '{reader.GetString(0)}' has an invalid stored cleanup timestamp.",
+                    exception);
+            }
+
+            if (state is ProcessingJobState.Queued or ProcessingJobState.Running ||
+                workspaceCleanedAtUtc < updatedAtUtc)
+            {
+                throw new InvalidDataException(
+                    $"Processing job '{reader.GetString(0)}' has an inconsistent stored cleanup timestamp.");
+            }
+        }
+
         return new StoredProcessingJob(
             Guid.Parse(reader.GetString(0)),
             Guid.Parse(reader.GetString(1)),
@@ -2722,8 +2823,9 @@ public sealed class SqliteProfileStore
             totalBytes,
             relativePath,
             error,
-            ParseTimestamp(reader.GetString(10)),
-            ParseTimestamp(reader.GetString(11)));
+            createdAtUtc,
+            updatedAtUtc,
+            workspaceCleanedAtUtc);
     }
 
     private static async Task<bool> HasAnyMediaAssetLinksAsync(

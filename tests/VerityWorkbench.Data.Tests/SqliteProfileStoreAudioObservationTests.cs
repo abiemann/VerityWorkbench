@@ -21,7 +21,7 @@ public sealed class SqliteProfileStoreAudioObservationTests
         var restarted = new SqliteProfileStore(database.DatabasePath, createIfMissing: false);
         await restarted.InitializeAsync();
 
-        Assert.Equal(7L, await ReadSchemaVersionAsync(database.DatabasePath));
+        Assert.Equal(8L, await ReadSchemaVersionAsync(database.DatabasePath));
         Assert.True(await TableHasColumnAsync(
             database.DatabasePath,
             "media_assets",
@@ -88,9 +88,8 @@ public sealed class SqliteProfileStoreAudioObservationTests
             await restarted.GetAudioObservationResultsAsync(setup.Profile.Id)));
         Assert.Equal(MediaQualityState.NotAssessed, result.MediaQualityState);
         Assert.Equal(ModelApplicabilityState.NotAssessed, result.ModelApplicabilityState);
-        Assert.Equal(
-            ProcessingJobState.Completed,
-            (await restarted.GetProcessingJobAsync(jobId))!.State);
+        var completedJob = (await restarted.GetProcessingJobAsync(jobId))!;
+        Assert.Equal(ProcessingJobState.Completed, completedJob.State);
         await Assert.ThrowsAsync<SqliteException>(() => ExecuteAsync(
             database.DatabasePath,
             "UPDATE audio_observation_results SET exact_sample_sum = '2' " +
@@ -98,15 +97,38 @@ public sealed class SqliteProfileStoreAudioObservationTests
             snapshot.MediaAssetId));
 
         var profile = (await restarted.GetByIdAsync(setup.Profile.Id))!;
+        var validationBeforeCleanup = await restarted.GetMediaValidationResultAsync(snapshot.MediaAssetId);
+        var preprocessingBeforeCleanup = await restarted.GetMediaPreprocessingResultAsync(snapshot.MediaAssetId);
+        Assert.True(await restarted.MarkProcessingJobWorkspaceCleanedAsync(
+            profile.Id,
+            jobId,
+            ProcessingJobState.Completed,
+            completedJob.WorkspaceRelativePath,
+            BaseTime.AddMinutes(12)));
+        var afterCleanup = new SqliteProfileStore(database.DatabasePath, createIfMissing: false);
+        var profileAfterCleanup = await afterCleanup.GetByIdAsync(profile.Id);
+        Assert.NotNull(profileAfterCleanup);
+        Assert.Equal(profile.Readiness, profileAfterCleanup.Readiness);
+        Assert.Equal(profile.UpdatedAtUtc, profileAfterCleanup.UpdatedAtUtc);
+        Assert.Equal(profile.TrainingVideos.ToArray(), profileAfterCleanup.TrainingVideos.ToArray());
+        Assert.Equal(observedAsset, Assert.Single(await afterCleanup.GetMediaAssetsAsync(profile.Id)));
+        Assert.Equal(validationBeforeCleanup, await afterCleanup.GetMediaValidationResultAsync(snapshot.MediaAssetId));
+        Assert.Equal(
+            preprocessingBeforeCleanup,
+            await afterCleanup.GetMediaPreprocessingResultAsync(snapshot.MediaAssetId));
+        Assert.Equal(result, await afterCleanup.GetAudioObservationResultAsync(snapshot.MediaAssetId));
+        Assert.Equal(
+            BaseTime.AddMinutes(12),
+            (await afterCleanup.GetProcessingJobAsync(jobId))!.WorkspaceCleanedAtUtc);
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            restarted.StartAudioObservationJobAsync(
+            afterCleanup.StartAudioObservationJobAsync(
                 profile.Id,
                 profile.UpdatedAtUtc,
                 Guid.NewGuid(),
                 "Processing/audio-observation/no-pending-assets",
                 ObservationContractVersion,
                 ObservationContractSha256,
-                BaseTime.AddMinutes(12)));
+                BaseTime.AddMinutes(13)));
     }
 
     [Fact]
@@ -539,6 +561,7 @@ public sealed class SqliteProfileStoreAudioObservationTests
             DROP TABLE audio_observation_job_assets;
             DROP TABLE audio_observation_results;
             ALTER TABLE media_assets DROP COLUMN audio_observation_failure;
+            ALTER TABLE processing_jobs DROP COLUMN workspace_cleaned_utc;
             PRAGMA user_version = 6;
             """;
         await command.ExecuteNonQueryAsync();

@@ -34,7 +34,7 @@
                     VerticalAlignment="Center"
                     Background="{ThemeResource AccentFillColorSecondaryBrush}"
                     CornerRadius="16">
-                    <TextBlock Text="Milestone 8 · objective audio observations" />
+                    <TextBlock Text="Milestone 9 · processing history" />
                 </Border>
             </Grid>
         </Border>
@@ -55,7 +55,7 @@
                     <StackPanel Spacing="4">
                         <TextBlock FontWeight="SemiBold" Text="Research limitation" />
                         <TextBlock
-                            Text="This is not a general-purpose lie detector. This milestone records label-blind, whole-file PCM measurements from prepared analysis audio. It does not detect speech, identity, language, media quality, model applicability, behavior, truth, or deception."
+                            Text="This is not a general-purpose lie detector. This milestone lets the user inspect and delete retained processing-job folders. Cleanup does not repair media, assess quality or model applicability, extract features, train a model, or produce a truth/deception result."
                             TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
@@ -110,6 +110,7 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock
                             VerticalAlignment="Center"
@@ -136,8 +137,14 @@
                             Content="Review Prepared Media"
                             IsEnabled="False" />
                         <Button
-                            x:Name="CancelProcessingButton"
+                            x:Name="ProcessingHistoryButton"
                             Grid.Column="4"
+                            Click="ProcessingHistory_Click"
+                            Content="Processing History"
+                            IsEnabled="False" />
+                        <Button
+                            x:Name="CancelProcessingButton"
+                            Grid.Column="5"
                             Click="CancelProcessing_Click"
                             Content="Cancel Processing"
                             IsEnabled="False" />
@@ -348,6 +355,139 @@
                 </Grid>
                 </Grid>
             </ScrollViewer>
+
+            <Grid
+                x:Name="ProcessingHistoryView"
+                Margin="32"
+                Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="4">
+                        <TextBlock FontSize="26" FontWeight="SemiBold" Text="Processing History" />
+                        <TextBlock
+                            x:Name="ProcessingHistoryProfileText"
+                            Opacity="0.7"
+                            Text="Selected profile"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button
+                        x:Name="CloseProcessingHistoryButton"
+                        Grid.Column="1"
+                        VerticalAlignment="Top"
+                        Click="CloseProcessingHistory_Click"
+                        Content="Back to profiles" />
+                </Grid>
+
+                <Border
+                    Grid.Row="1"
+                    Margin="0,18,0,18"
+                    Padding="14"
+                    Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                    CornerRadius="8">
+                    <StackPanel Spacing="4">
+                        <TextBlock FontWeight="SemiBold" Text="Retained processing data" />
+                        <TextBlock
+                            Text="These folders contain bounded intermediate job data. Deleting one does not delete registered media, prepared bundles, persisted results, or the job's audit record, and it does not change profile readiness. Active or unsafe folders cannot be deleted."
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <Grid Grid.Row="2">
+                    <ProgressRing
+                        x:Name="ProcessingHistoryProgress"
+                        Width="28"
+                        Height="28"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        IsActive="False" />
+                    <TextBlock
+                        x:Name="EmptyProcessingHistoryText"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Opacity="0.7"
+                        Text="No processing jobs are recorded for this profile."
+                        Visibility="Collapsed" />
+                    <ListView
+                        x:Name="ProcessingHistoryList"
+                        HorizontalContentAlignment="Stretch"
+                        IsEnabled="False"
+                        SelectionMode="None">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Border
+                                    Margin="0,3"
+                                    Padding="14"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="8">
+                                    <Grid ColumnSpacing="18" RowSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="2*" />
+                                            <ColumnDefinition Width="2*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+
+                                        <StackPanel Spacing="3">
+                                            <TextBlock FontWeight="SemiBold" Text="{Binding KindText}" />
+                                            <TextBlock Opacity="0.72" Text="{Binding OutcomeText}" />
+                                            <TextBlock Opacity="0.72" Text="{Binding ProgressText}" TextWrapping="Wrap" />
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Column="1" Spacing="3">
+                                            <TextBlock Text="{Binding CreatedText}" />
+                                            <TextBlock Opacity="0.72" Text="{Binding UpdatedText}" />
+                                            <TextBlock
+                                                FontFamily="Consolas"
+                                                Opacity="0.72"
+                                                Text="{Binding WorkspaceRelativePath}"
+                                                TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+
+                                        <StackPanel
+                                            Grid.Column="2"
+                                            HorizontalAlignment="Right"
+                                            Orientation="Horizontal"
+                                            Spacing="8">
+                                            <Button
+                                                Click="OpenProcessingJobFolder_Click"
+                                                Content="Open Folder"
+                                                IsEnabled="{Binding CanOpenFolder}" />
+                                            <Button
+                                                Click="DeleteProcessingJobData_Click"
+                                                Content="Delete Processing Data"
+                                                IsEnabled="{Binding CanDeleteProcessingData}" />
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Spacing="3">
+                                            <TextBlock
+                                                FontWeight="SemiBold"
+                                                Text="{Binding CleanupStatusText}"
+                                                TextWrapping="Wrap" />
+                                            <TextBlock
+                                                Opacity="0.72"
+                                                Text="{Binding ErrorText}"
+                                                TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+            </Grid>
 
             <ScrollViewer
                 x:Name="AddProfileView"

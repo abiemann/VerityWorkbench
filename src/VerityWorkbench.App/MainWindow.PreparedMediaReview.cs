@@ -54,6 +54,7 @@ public sealed partial class MainWindow
             return;
         }
 
+        ResetProcessingHistoryState(showMainView: false);
         ResetPreparedMediaReviewState(showMainView: false);
         _preparedMediaReviewIsOpen = true;
         _preparedMediaReviewProfileId = selected.Id;
