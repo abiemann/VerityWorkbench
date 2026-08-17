@@ -61,6 +61,23 @@
 - [x] Require no new runtime, model, worker, or manual installation for this milestone.
 - [ ] Perform the README manual test for creation, rename stability, explicit assignment, cross-condition membership, migration, archive/unarchive counts, shared-asset conflicts, restart persistence, and unchanged processing/readiness/review/query state.
 
+## Milestone 8 objective analysis-audio observations
+
+- [x] Freeze and hash a versioned objective-observation contract for the exact accepted Milestone 5 mono 16 kHz signed 16-bit little-endian PCM `audio.wav`; keep it distinct from both the existing FFmpeg `astats` preprocessing diagnostics and every future feature contract.
+- [x] Verify the complete accepted prepared bundle and the expected analysis-audio path, byte length, and SHA-256 before scanning. Persist missing, changed, or out-of-bound bundle evidence as an integrity failure; record a hash-matching malformed or contract-inconsistent WAVE as an objective-observation failure needing attention.
+- [x] Parse RIFF/WAVE and scan the PCM data in bounded managed code without invoking FFmpeg, loading the whole file, or adding a runtime, model, worker, or manual installation.
+- [x] Make the worker label-blind: do not supply or consume the training bucket, recording label, dependency-group label, profile display name, original source path, or filename.
+- [x] Process each unique active prepared media asset once, reuse one immutable result for duplicate selections, omit archived-only assets from active work, and retain prior immutable results for audit/reuse.
+- [x] Persist exact whole-file integer observations: rechecked data/sample count and duration, minimum and maximum signed sample, absolute peak magnitude, positive/negative/zero sample counts, `-32768`/`+32767` endpoint counts, directly adjacent nonzero opposite-sign crossings, signed-sample sum, and squared-sample sum; use arbitrary-precision integer accumulation and lossless persistence for the sums.
+- [x] Store successful immutable results only in `Profile/profile.sqlite`, keyed to the accepted audio hash/length and preprocessing and objective-observation contract provenance; create no artifact or window rows under `Prepared`, `Features`, or any other workspace folder.
+- [x] Use a separate persistent objective-observation job with snapshotted unique-asset membership, heartbeat/progress, cooperative cancellation, stale-job recovery, retryable operational failures, and no partial-success row.
+- [x] Treat `AudioObserved` as an engineering prepared-media status only; expose pending/in-progress/recorded/retry status through the existing **Process Data** workflow and profile summary, while **Review Prepared Media** remains available and **Query Profile** remains unavailable.
+- [x] Keep media quality and model applicability **Not assessed**. Do not infer or present speech, silence, pause, clipping, VAD, speaker, language, identity, authenticity, quality, applicability, behavioral-feature, training-eligibility, score, probability, truth, or deception results from the observations.
+- [x] Do not display the raw exact counts as user-interpretable evidence in this milestone; verify their values and persistence through the result API and automated tests.
+- [x] Add generated-PCM and persistence tests for all-zero data, positive/negative values, both signed endpoints, exact count/sum/squared-sum arithmetic, RIFF chunk handling, malformed/truncated input, hash/length mismatch, label blindness, duplicate/archived selection handling, cancellation, restart recovery, and immutable conflict handling.
+- [ ] Perform the README manual test for pending/in-progress/cancel/retry/completed/restart status, unique-active-asset counting, unchanged prepared-media review, unavailable Query Profile, unchanged quality/applicability state, and absence of new workspace artifacts or scientific interpretations.
+- [ ] Before introducing an objective-observation contract v2, add an explicit version-aware result identity and migration/replacement policy; job selection and readiness must compare the requested contract instead of treating an immutable v1 row as a current result.
+
 ## Multilingual transcription and model-language gate
 
 - [ ] Select and license a local multilingual ASR model/runtime; do not use an English-only model for the product path.

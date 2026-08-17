@@ -14,7 +14,7 @@
 
 **Working description:** A person-specific system for studying whether synchronized facial, vocal, and linguistic changes are associated with independently verified intentional deception under controlled, comparable conditions.
 
-**Current implementation snapshot:** Implementation Milestone 7 adds explicit recording dependency groups to the persistent profile, local MP4 ingest, complete selected-stream validation, deterministic preprocessing, and prepared-media review path. Each group has a stable profile-scoped ID and editable display label, and each training selection can be explicitly assigned without deriving experimental structure from its recording-date label. Existing selections migrate to `Unassigned`; active assigned-group, unassigned-selection, and shared-media-asset conflict counts are reported without claiming an independent sample size. Processing/readiness, prepared-media review, and unavailable Query Profile behavior are unchanged. Media quality and model applicability remain `NotAssessed`; transcription, feature extraction, identity/authenticity/language assessment, training, inference, and scoring are not implemented. This implementation-slice numbering is distinct from the longer-term scientific delivery roadmap in Section 14.
+**Current implementation snapshot:** Implementation Milestone 8 adds a frozen, label-blind managed-code observation pass over the exact hash-verified mono PCM `audio.wav` produced by deterministic preprocessing. Each unique active prepared media asset is scanned once, and immutable exact whole-file integer observations with input/contract provenance are stored only in the profile SQLite database. This stage creates no artifact or time window, does not relabel the existing FFmpeg `astats` preprocessing diagnostics, and makes no speech, language, identity, authenticity, quality, applicability, behavioral-feature, training, query, truth, or deception judgment. Recording dependency groups remain explicit curation metadata and never establish an independent sample count. Prepared-media review remains available, **Query Profile** remains unavailable, and media quality and model applicability remain `NotAssessed`. This implementation-slice numbering is distinct from the longer-term scientific delivery roadmap in Section 14.
 
 ## 1. Executive summary
 
@@ -526,6 +526,8 @@ Candidate measurements include:
 
 The distributable baseline should use permissively licensed, locally executed components: librosa/SciPy for transparent acoustic measurements and Silero VAD through ONNX for speech-region detection. Component and model licenses must be recorded separately. [librosa license](https://github.com/librosa/librosa/blob/main/LICENSE.md), [Silero VAD](https://github.com/snakers4/silero-vad)
 
+Implementation Milestone 8 deliberately stops before this feature-extraction boundary. It uses a frozen managed-code contract to record exact whole-file integer facts from the already accepted normalized PCM WAVE, with no VAD, framing/windowing, speech-region selection, threshold, quality gate, or feature-eligibility interpretation. Those DB-only observations are not audio features and are not inputs to training or query inference. A future VAD/window/feature contract must define and validate its own framing, timestamp, missingness, quality, and provenance rules rather than silently treating these whole-file aggregates as model-ready evidence.
+
 OpenSMILE/eGeMAPS remains a useful research comparison, but openSMILE's research/noncommercial terms prevent it from becoming a required dependency of a generally reusable open-source release without separate permission. Its measurements may inform independent feature-design experiments; its code is not copied or bundled. [openSMILE license](https://github.com/audeering/opensmile/blob/master/LICENSE)
 
 ### 7.5 Speech recognition and text features
@@ -712,7 +714,17 @@ Future model training and T+1 analysis consume only finalized, validated local a
 
 The implemented timestamp map is an affine target-time mapping anchored at the minimum first-decoded presentation timestamp of the selected video/audio streams after rebasing. It is not exact source-frame lineage: conversion to the 30 fps playback proxy may select, duplicate, or omit source frames; asynchronous audio resampling may pad, trim, or compensate for timestamp discontinuities; and microsecond/sample conversions are rounded. The map supports synchronized presentation and later explicit alignment work, but it does not itself prove frame correspondence or model suitability.
 
-In the current application, ingest, validation, and preprocessing are separate persistent phases. One **Process Data** click advances at most one phase. A validated profile reports **Media validated — awaiting preprocessing**; successful preprocessing reports **Media prepared — quality and applicability not assessed**. These are engineering states, not scientific eligibility decisions.
+In the current application, ingest, validation, preprocessing, and objective analysis-audio observation are separate persistent phases. One **Process Data** click advances at most one phase. A validated profile reports **Media validated — awaiting preprocessing**; successful preprocessing reports **Media prepared — objective audio observations pending; quality and applicability not assessed**; successful Milestone 8 observation reports **Media prepared — objective audio observations recorded; quality and applicability not assessed**. These are engineering states, not scientific eligibility decisions.
+
+Implementation Milestone 8 accepts only the exact accepted analysis WAVE from the immutable prepared bundle. Before opening it, the application verifies the registered original and every required prepared artifact against its confined workspace-relative path, byte length, and SHA-256. A bounded managed-code RIFF/WAVE reader then requires format tag 1, mono 16 kHz signed 16-bit little-endian PCM, consistent block alignment and byte rate, exactly one supported data chunk, and sample count/duration consistent with the committed preprocessing record. The observation phase invokes neither FFmpeg nor a model and requires no new installation.
+
+The observation pass is label-blind. Its computation receives no sincere-truth/intentional-deception bucket, recording label, dependency-group label, profile display name, source path, or filename. Work membership is one row per unique active prepared media asset, not one row per training selection: duplicate selections reuse one immutable result, while an asset referenced only by archived selections is omitted from active work without deleting any prior result.
+
+The frozen version-1 result records only exact whole-file integer facts: committed and processed sample counts, duration, minimum and maximum signed sample, absolute peak magnitude, positive/negative/zero sample counts, `+32767` and `-32768` endpoint counts, directly adjacent nonzero opposite-sign crossings, signed-sample sum, and squared-sample sum. The two sums use arbitrary-precision integer accumulation and lossless decimal persistence. Contract identity, input audio hash/length, preprocessing provenance, normalized WAVE format, and observation timestamp accompany the result. These facts do not identify speech, silence, pauses, clipping, a speaker, language, identity, authenticity, quality, applicability, a behavioral feature, training eligibility, truth, or deception. In particular, endpoint counts and sign crossings have no pass/fail meaning in this milestone.
+
+Results are immutable and DB-only. No observation artifact, frame, or 100 ms/1600-sample window is created under `Prepared`, `Features`, or another workspace directory. The pre-existing FFmpeg `astats` values in `preprocessing-manifest.json` remain bounded preprocessing diagnostics; they are not renamed, copied, or accepted as the Milestone 8 managed-code result. Any future VAD, framing, speech-quality, feature, or applicability stage needs a separately frozen and validated contract.
+
+Objective observation uses the existing persistent job lifecycle with snapshotted unique-asset membership, progress, heartbeat, cooperative cancellation, stale-job recovery, and bounded sanitized failure state. Cancellation closes the exact WAVE stream and records no partial success; the profile remains prepared with pending observations and can be retried. An operational read failure is retryable and is not converted into a quality failure. A missing, changed, or out-of-bound accepted bundle artifact follows the persistent integrity-failure path. A hash-matching WAVE that is malformed or inconsistent with the frozen PCM contract produces an objective-observation failure needing attention; it is not represented as source tampering or a media-quality judgment. `AudioObserved` remains an engineering prepared-media readiness state: prepared review stays available, **Query Profile** stays unavailable, and both quality and applicability remain `NotAssessed`. Raw exact counts are persisted and tested but are not presented as user-interpretable evidence in this milestone.
 
 Implementation Milestone 6 adds a read-only prepared-media review boundary after preprocessing. The review enumerates unique media assets, not training-selection rows: if one content-addressed asset is linked by multiple selections, their recording labels and training conditions are aggregated as annotations on the single asset. This prevents the review UI from visually implying that duplicate selections, simultaneous views, excerpts, or repeated labels are independent observations.
 
@@ -720,7 +732,7 @@ Before any player source is assigned, the application rechecks the registered or
 
 Only the verified `proxy.mp4` is supplied to the media player. Its current playback position is the proxy **target time**. For preprocessing contract v1, the accompanying **Approximate source PTS** is calculated as the immutable stored source-timeline origin plus target time, using checked, bounded time arithmetic. The same origin and 1:1 affine relationship are recorded in the hash-verified v1 timestamp map. Review does not claim to parse a general future mapping contract at playback; version-dispatched mapping must be added before a non-v1 contract is accepted. The label and help text must preserve the word **Approximate** because the proxy's 30 fps conversion can select, duplicate, or omit source frames and the map does not provide exact frame lineage.
 
-Opening, seeking, pausing, closing, or reopening review changes no processing or scientific state. `ProfileReadiness.MediaPrepared`, `MediaQualityState.NotAssessed`, and `ModelApplicabilityState.NotAssessed` remain unchanged. Review performs no identity, authenticity, speaker, language, quality, applicability, feature, training, inference, or behavioral assessment and creates no transcript, feature artifact, model, score, confidence, probability, or percentage. It requires no dependency beyond the existing application/runtime and already-installed preprocessing toolchain; playback itself consumes the already-created proxy and invokes no model or new worker.
+Opening, seeking, pausing, closing, or reopening review changes no processing or scientific state. The profile's current readiness, `MediaQualityState.NotAssessed`, and `ModelApplicabilityState.NotAssessed` remain unchanged. Review performs no identity, authenticity, speaker, language, quality, applicability, feature, training, inference, or behavioral assessment and creates no transcript, feature artifact, model, score, confidence, probability, or percentage. It requires no dependency beyond the existing application/runtime and already-installed preprocessing toolchain; playback itself consumes the already-created proxy and invokes no model or new worker.
 
 ### 8.5 Storage layout
 
@@ -780,6 +792,8 @@ Every processing run is confined to one unique `Processing` job folder. Cancella
 
 The current preprocessing implementation stages all four required files below the job, verifies and hashes them, rechecks the immutable source, and promotes the complete directory by one atomic move. A durable promotion journal bridges that filesystem move and the SQLite commit. Refresh/startup reconciliation verifies a database-committed bundle, returns an uncommitted bundle to its job when safe, or persists an integrity failure for an inconsistent committed bundle before stale-job recovery. An accepted `Prepared/v1_<contract-prefix>` bundle is immutable and is never silently overwritten.
 
+Milestone 8 creates no observation-result workspace artifact. Its persistent objective-observation job metadata and immutable successful results live only in `Profile/profile.sqlite`; the `Features` directory remains unused by this stage. A bounded `Processing` job folder may exist for the ordinary inspectable job lifecycle, but it is not promoted or treated as a result. A result is keyed to the unique media asset, accepted analysis-audio SHA-256 and byte length, preprocessing-contract identity, and objective-observation-contract identity. A contract or input mismatch cannot overwrite or masquerade as the existing result.
+
 Archiving a training video is a logical metadata action: the artifact and audit history remain in place, but the video is excluded from future candidate models. Permanent deletion and consent withdrawal are separate operations. Withdrawal disables any active model derived from the withdrawn data and triggers the configured deletion workflow.
 
 Recording dependency groups are profile metadata stored separately from media identity and training condition. Renaming a group preserves its stable ID. Archiving a selection preserves its assignment, while active summaries and future training preflight ignore archived rows. The grouping schema migration assigns historical rows to `Unassigned`; it never derives capture-event identity from a recording label, file path, timestamp, condition, or media hash.
@@ -798,6 +812,8 @@ Each artifact manifest records:
 - profile lineage, parent model version, compatibility contract, and promotion state where applicable.
 
 For the implemented preprocessing bundle, the database stores exact SHA-256 hashes and byte lengths for `proxy.mp4`, `audio.wav`, `timestamp-map.json`, and `preprocessing-manifest.json`. The preprocessing manifest records source/upstream hashes, normalized artifact metadata, preprocessing/tool/validation-contract provenance, timeline observations and limitations, and explicit `NotAssessed` media-quality and model-applicability states. It excludes original paths, source filenames, raw FFmpeg/ffprobe output, transcript text, behavioral features, and scores. Hashes can still be linkable and must be treated as private workspace metadata rather than anonymous data.
+
+For the implemented objective analysis-audio observation, the database additionally stores the frozen normalized WAVE contract, rechecked sample count/duration, exact whole-file integer facts, input and upstream contract/hash provenance, result timestamp, and explicit `NotAssessed` quality/applicability states. Exact arbitrary-precision sums are serialized losslessly rather than converted to floating point. The result includes no training label, recording label, dependency-group label, profile name, source path, filename, speech region, time window, interpretation, feature, model, or score.
 
 Python-versus-C# inference parity must be tested before accepting an ONNX export. A destination import also verifies feature schema, preprocessing hash, ONNX opset/runtime support, and required worker/model versions before allowing queries.
 
@@ -904,6 +920,7 @@ The initial database should model:
 - **Download:** sanitized source metadata, `.part` and resume-manifest paths, received and expected byte counts, strong validator, resumability state, and user action history.
 - **Session or capture group:** stable group ID, associated synchronized camera views, format, interviewer, topic, stakes, rehearsal, device, environment, production source, synchronization metadata, and camera-angle roles. The display-date label is not proof of independence.
 - **Processing job:** unique inspectable folder, job kind, state, stage timings, progress, cancellation reason, worker identities, and produced-artifact references.
+- **Objective analysis-audio observation:** unique prepared-media asset, accepted WAVE hash/length and preprocessing provenance, frozen observation-contract version/hash, normalized PCM format, exact whole-file integer facts, immutable completion time, and unchanged `NotAssessed` quality/applicability states. It has no label, dependency group, path, window, threshold, interpretation, feature, or score.
 - **Segment:** start/end timestamps, speaker, detected/user-confirmed language, language confidence/coverage, code-switch boundary, question, answer, claim, and quality.
 - **Label:** label scope, factual status, belief status, intent status, verification method, evidence/provenance, annotator/reviewer, and confidence.
 - **Feature artifact:** pipeline version, schema, hashes, missingness, and storage path.
@@ -929,7 +946,7 @@ The primary navigation presents three actions:
 
 Profile cards show the pseudonymous display name, query-ready language/model versions, readiness, pending changes, and background job status. States include `Draft`, `Downloading`, `Processing`, `Needs Review`, `Training`, `Validating`, `Ready — Baseline Only`, `Ready — Experimental Model`, `Ready — Imported Query Model`, `Cancelled`, `Update Failed`, and `Cannot Model Reliably`. During an ordinary update, the last validated model for each language remains clearly identified and queryable until a same-language replacement passes every promotion gate.
 
-Before Query Profile exists, a selected `MediaPrepared` profile may expose the secondary **Review Prepared Media** action described in Section 10.5. This action reviews accepted presentation derivatives and does not make the profile query-ready.
+Before Query Profile exists, a selected `MediaPrepared`, `AudioObservationFailed`, or `AudioObserved` profile may expose the secondary **Review Prepared Media** action described in Section 10.5. This action reviews accepted presentation derivatives and does not make the profile query-ready.
 
 ### 10.2 Add Profile
 
@@ -978,13 +995,13 @@ The main view and profile detail view show current stage, progress, elapsed time
 
 Cancelling a processing job stops the full worker tree, closes every stream and file handle, records the cancellation, and leaves its unique processing folder intact and unlocked. No partial artifact or model is promoted. The UI exposes **Open Folder** and **Delete Processing Data**, allowing the user to inspect or later remove the bounded job directory.
 
-In implementation Milestones 5 through 7, **Process Data** deliberately performs only the next eligible processing phase per click: local ingest, then MP4 validation, then deterministic preprocessing. Preprocessing progress and result state are persisted. Cancellation terminates the pinned FFmpeg/ffprobe process tree and records no false success; restart reconciliation resolves journaled promotion state before recovering stale jobs. Prepared-media review and recording dependency-group editing are not processing phases or jobs. A prepared profile remains explicitly **quality and applicability not assessed** until separately declared and validated gates exist.
+In implementation Milestones 5 through 8, **Process Data** deliberately performs only the next eligible processing phase per click: local ingest, then MP4 validation, then deterministic preprocessing, then objective analysis-audio observation. Each phase has separate persistent progress and result state. Validation/preprocessing cancellation terminates the pinned FFmpeg/ffprobe process tree; objective-observation cancellation closes the managed WAVE stream. Neither path records false or partial success. Restart reconciliation and stale-job recovery run before new work. Prepared-media review and recording dependency-group editing are not processing phases or jobs. A prepared or audio-observed profile remains explicitly **quality and applicability not assessed** until separately declared and validated gates exist.
 
 ### 10.5 Prepared-media review
 
 The prepared-media review flow:
 
-1. Select a profile in `MediaPrepared` state and choose **Review Prepared Media**.
+1. Select a profile whose media is prepared, whether objective audio observations are pending, failed/retryable, or recorded, and choose **Review Prepared Media**.
 2. Load each unique media asset once and show its aggregated recording labels and training conditions. These annotations remain human-entered curation metadata and do not assert independent samples or label correctness.
 3. Before enabling playback for a selected asset, verify the original's expected length and hash, resolve every required prepared-artifact path within the profile workspace, and verify the complete bundle's stored lengths and hashes.
 4. If verification succeeds, assign only the accepted `proxy.mp4` to the player. If verification fails, refuse playback and surface the existing integrity-repair state rather than substituting the original or another derivative.
@@ -1003,7 +1020,20 @@ Future training cannot start while any active row is unassigned or while active 
 
 Creating, renaming, assigning, archiving, or unarchiving dependency groups changes no ingest, validation, preprocessing, readiness, review, or model state. It invokes no worker or model, requires no installation beyond the existing application, leaves **Query Profile** unavailable, and creates no transcript, feature, identity/language/quality/applicability result, score, probability, or percentage.
 
-### 10.7 Query Profile
+### 10.7 Objective analysis-audio observations
+
+The existing **Process Data** action starts this stage only after every unique active media asset has an accepted prepared bundle and at least one lacks a compatible immutable observation result. The job snapshots each eligible unique asset once; repeated training selections do not multiply work. The main/profile summary exposes only the engineering lifecycle:
+
+- **Media prepared — objective audio observations pending; quality and applicability not assessed**;
+- **Recording objective whole-file audio observations…** with unique-asset progress and **Cancel Processing**;
+- **Objective audio observation extraction needs attention** with retry available; or
+- **Media prepared — objective audio observations recorded; quality and applicability not assessed**.
+
+The UI does not render raw counts, graphs, thresholds, or interpretations for these results. Their exact values are an internal versioned result API and automated-test concern. This avoids presenting arithmetic properties of the entire normalized WAVE as evidence about speech, the subject, quality, applicability, truth, or deception.
+
+Cancellation closes the active stream, stores no partial result, and returns the profile to the prepared/pending state. Operational failure is retryable; integrity failure remains persistent and distinct. Completed status and immutable results survive restart. **Review Prepared Media** remains available throughout pending, retryable-failure, and completed observation states because it independently verifies and plays the presentation proxy. Media quality and model applicability remain `NotAssessed`, no feature or training job is started automatically, and **Query Profile** remains unavailable.
+
+### 10.8 Query Profile
 
 The Query Profile flow:
 
@@ -1054,7 +1084,7 @@ Before calibration, an eligible query may show a directional **Experimental beha
 
 The interface never labels an output `% truth`, `truth confidence`, or sentence truthfulness, and it never treats one minus a deception score as factual truth. Identity, authenticity, applicability, and behavioral values are never multiplied or collapsed into a single confidence. Transcript sentences are presentation and seek units, not automatically independent statistical observations. Output granularity must match the model's trained and validated target: a whole-video model may show only a shared video/answer result, while true per-answer or per-claim output requires aligned labels, features, grouped evaluation, and calibration at that level. Query results are never automatically recycled as training labels.
 
-### 10.8 Synchronized label and tracking review
+### 10.9 Synchronized label and tracking review
 
 - Video player with frame-accurate timeline.
 - Subject-face selection, synchronized-view grouping, and tracking review.
@@ -1064,7 +1094,7 @@ The interface never labels an output `% truth`, `truth confidence`, or sentence 
 - Face/audio/ASR confidence overlays.
 - Mandatory human review before a training label becomes eligible.
 
-### 10.9 Experiment designer
+### 10.10 Experiment designer
 
 - Select a profile and eligible independent sessions or capture groups.
 - Define outcome and inclusion criteria.
@@ -1072,7 +1102,7 @@ The interface never labels an output `% truth`, `truth confidence`, or sentence 
 - Show independent session counts rather than inflated frame, sentence, or camera-view counts.
 - Warn about class/source/topic/device/camera leakage.
 
-### 10.10 Training and validation
+### 10.11 Training and validation
 
 - Build and validate identity enrollment/templates independently of truth/deception labels.
 - Display genuine/impostor identity results, threshold versions, modality conflicts, abstention, and wrong-subject score leakage separately from behavioral-model metrics.
@@ -1084,7 +1114,7 @@ The interface never labels an output `% truth`, `truth confidence`, or sentence 
 - Generate a model card and immutable internal model version that remains deletable when authorization is withdrawn.
 - Promote a candidate atomically only after validation succeeds.
 
-### 10.11 Model import and export
+### 10.12 Model import and export
 
 The import action accepts exactly one `.vwpkg` file, displays its package type and declared lineage, validates it in a private staging job, and explains whether the resulting profile is query-only or extendable. It never runs package-provided code or downloads missing dependencies.
 
@@ -1443,6 +1473,7 @@ Failure is an informative research result. It should cause the system to remain 
 - Processing cancellation stops workers, closes file handles, does not promote partial results, and leaves the bounded job folder available for inspection or deletion.
 - Deterministic preprocessing creates a local playback-only MPEG-4 Part 2/AAC proxy, mono 16 kHz PCM analysis WAV, affine target-time map, and privacy-bounded manifest in an immutable `Prepared/v1_<contract-prefix>` bundle; every artifact is hashed and journaled promotion is restart-reconciled.
 - Successful preprocessing leaves media quality and model applicability `NotAssessed`. It does not imply transcription, feature, identity, authenticity, language, training, or scoring readiness, and the playback proxy is not automatically a visual-model input.
+- Objective analysis-audio observation is a separate, label-blind persistent phase over the exact accepted PCM WAVE. It processes each unique active prepared media asset once, records immutable exact whole-file integer facts and contract/input provenance only in SQLite, creates no window or workspace artifact, invokes no FFmpeg/model/new dependency, leaves quality/applicability `NotAssessed`, and does not enable features, training, Query Profile, or any truth/deception interpretation.
 - Archived videos remain stored and audited but are excluded from future candidate models; permanent deletion and withdrawal are separate.
 - Query results use synchronized video and clickable transcript timestamps, with strict score/calibration language and abstention.
 - Non-English MP4s are supported through local multilingual ASR. The UI preserves the original-language transcript, user correction, and optional English translation as separate artifacts.

@@ -11,5 +11,8 @@ public enum ProfileReadiness
     PreprocessingMedia,
     MediaPreprocessingFailed,
     MediaPrepared,
+    ExtractingAudioObservations,
+    AudioObservationFailed,
+    AudioObserved,
     MediaIntegrityFailed,
 }

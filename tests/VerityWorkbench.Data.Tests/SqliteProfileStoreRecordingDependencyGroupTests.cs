@@ -91,6 +91,10 @@ public sealed class SqliteProfileStoreRecordingDependencyGroupTests
         {
             await using var command = connection.CreateCommand();
             command.CommandText = """
+                DROP TRIGGER audio_observation_results_immutable_update;
+                DROP TABLE audio_observation_job_assets;
+                DROP TABLE audio_observation_results;
+                ALTER TABLE media_assets DROP COLUMN audio_observation_failure;
                 DROP TRIGGER training_videos_dependency_group_profile_insert;
                 DROP TRIGGER training_videos_dependency_group_profile_update;
                 DROP INDEX ix_training_videos_recording_dependency_group;

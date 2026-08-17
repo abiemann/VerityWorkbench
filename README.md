@@ -2,7 +2,7 @@
 
 VerityWorkbench is a local-first Windows research workbench for investigating whether person-specific facial, vocal, timing, and linguistic changes correlate with independently supported intentional deception under controlled conditions.
 
-> Early development — Milestone 7 recording dependency groups. The application creates and edits persistent profiles, records user-defined capture-event dependency groups for training selections, ingests explicitly selected local MP4s into user-selected app-managed workspaces, validates and preprocesses them, and can review each unique prepared media asset through its verified presentation-only proxy. Grouping is curation metadata for future leakage-safe splitting; it does not establish an independent sample count. Media quality and model applicability remain **Not assessed**. The application does not yet transcribe speech, extract behavioral features, train a model, verify identity or authenticity, recognize language, or produce any behavioral score or probability.
+> Early development — Milestone 8 objective analysis-audio observations. After the existing ingest, validation, and preprocessing phases, the application can scan the exact hash-verified mono PCM `audio.wav` for each unique active prepared media asset and persist a versioned set of label-blind, whole-file integer observations in SQLite. These arithmetic facts are not speech, speaker, language, media-quality, model-applicability, behavioral-feature, or training results. Recording dependency groups remain curation metadata rather than an independent sample count. Media quality and model applicability remain **Not assessed**. The application does not yet transcribe speech, extract behavioral features, train a model, verify identity or authenticity, recognize language, or produce any behavioral score or probability.
 
 The authoritative scientific, product, privacy, and architecture specification is [design_doc.md](design_doc.md).
 
@@ -36,6 +36,7 @@ This repository is being implemented in small, testable slices.
 - [x] Persistent preprocessing results, cancellation, stale-job recovery, and crash-safe artifact promotion/reconciliation
 - [x] Prepared-media review that verifies the original and complete derivative bundle, lists unique media assets with their aggregated training labels, and plays only the presentation proxy with target and approximate source times
 - [x] Stable profile-scoped recording dependency groups with editable display labels, explicit per-selection assignment, active unassigned/conflict counts, and safe migration of existing selections to **Unassigned**
+- [x] Versioned managed-code inspection of each unique active prepared `audio.wav`, with immutable DB-only exact whole-file PCM observations and no windowed artifact or scientific eligibility decision
 - [ ] Declared media-quality and model-applicability thresholds; both states currently remain **Not assessed**
 - [ ] Direct-URL resumable downloads
 - [ ] Processing-folder inspection and verified cleanup controls
@@ -47,7 +48,7 @@ This repository is being implemented in small, testable slices.
 - [ ] Query Profile workflow
 - [ ] One-file encrypted `.vwpkg` import/export
 
-**Query Profile** remains deliberately unavailable. Prepared-media review is a local presentation and inspection aid, not query analysis. Edit Profile updates profile metadata, archive state, and recording dependency-group assignments but does not relocate workspaces, delete ingested assets, import packages, or export models. Dependency groups do not change processing or readiness and do not establish an independent sample count. Validation, preprocessing, and review do not establish subject identity, media authenticity, spoken language, label correctness, media quality, model applicability, or suitability for model training. The playback proxy is never accepted as visual model input. No placeholder or random scoring code exists.
+**Query Profile** remains deliberately unavailable. Prepared-media review is a local presentation and inspection aid, not query analysis. Edit Profile updates profile metadata, archive state, and recording dependency-group assignments but does not relocate workspaces, delete ingested assets, import packages, or export models. Dependency groups do not establish an independent sample count. Objective audio observations are whole-file arithmetic facts about the generated normalized PCM, not speech regions, behavioral features, or a pass/fail gate. Validation, preprocessing, observation, and review do not establish subject identity, media authenticity, spoken language, label correctness, media quality, model applicability, or suitability for model training. The playback proxy is never accepted as visual model input. No placeholder or random scoring code exists.
 
 ## What to install
 
@@ -62,7 +63,7 @@ D:\Tools\VerityWorkbench\FFmpeg\8.1\bin\ffprobe.exe
 
 The required build is BtbN FFmpeg-Builds `win64-lgpl-8.1`, build identity `n8.1.2-44-g7c533d0f86-20260815`, from release tag `autobuild-2026-08-15-13-02`. It reports `LGPL version 3 or later`; GPL and nonfree variants are not accepted by this validation contract.
 
-No additional install is required for Milestone 7 beyond the pinned FFmpeg/ffprobe toolchain already required for validation and preprocessing. Recording dependency groups use the existing .NET application and SQLite database; they do not invoke FFmpeg, install a model, or add a processing phase. Python, GPU drivers/toolkits, Whisper, ONNX Runtime, and model files are **not needed** for this milestone.
+No additional install is required for Milestone 8 beyond the pinned FFmpeg/ffprobe toolchain already required to create the prepared media bundle. The observation phase itself uses a bounded managed-code reader over the existing mono 16 kHz signed 16-bit PCM `audio.wav`; it does not invoke FFmpeg, Python, a GPU runtime, Whisper, ONNX Runtime, or any model.
 
 ### On another Windows development computer
 
@@ -218,7 +219,7 @@ Before moving a complete staged copy into `Media`, the app writes a small promot
 
 Content identity is the SHA-256 hash, not a path or filename. Identical content in the same training condition reuses one app-managed asset. The app verifies a stored asset's length and SHA-256 before reusing it and whenever **Process Data** is selected for a registered profile, but it cannot prevent another process or the user from changing workspace files. A missing or changed copy is persistently marked **Workspace media changed — repair required**, which blocks further processing after a restart while preserving the prior immutable validation record for audit. This milestone does not alter, delete, or replace the damaged copy. Archiving every training selection linked to it only excludes that asset so the remaining active set can proceed; it does not repair the asset, and adding the same media again is not a replacement workflow. Retain the original source until a journaled repair workflow is implemented. Identical bytes assigned to both sincere-truth and intentional-deception conditions are rejected for manual label resolution.
 
-**Media registered** means only that the app-managed bytes passed the ingest integrity checks. It does not mean the container or streams have been validated. Keep the original source at least until the third processing stage reports **Media prepared — quality and applicability not assessed**.
+**Media registered** means only that the app-managed bytes passed the ingest integrity checks. It does not mean the container or streams have been validated. Keep the original source at least until the third processing stage reports **Media prepared — objective audio observations pending; quality and applicability not assessed**. Recording objective observations does not add a repair or source-deletion guarantee.
 
 ### Validate registered MP4 media
 
@@ -236,14 +237,14 @@ This engineering gate says only that the registered MP4, selected stream metadat
 ### Prepare validated media
 
 1. Select a profile showing **Media validated — awaiting preprocessing** or **Media preprocessing needs attention**.
-2. Select **Process Data**. VerityWorkbench rechecks the original workspace asset and pinned toolchain before starting a separate persistent preprocessing job. One **Process Data** click advances only one phase: ingest, validation, and preprocessing are distinct jobs and are never silently chained into one click.
+2. Select **Process Data**. VerityWorkbench rechecks the original workspace asset and pinned toolchain before starting a separate persistent preprocessing job. One **Process Data** click advances only one phase: ingest, validation, preprocessing, and objective analysis-audio observation are distinct jobs and are never silently chained into one click.
 3. The pinned CPU/software FFmpeg path creates four files in the job's bounded staging folder:
    - `proxy.mp4`: a playback/presentation-only MP4 using software MPEG-4 Part 2 video (`mpeg4`), `yuv420p`, aspect-ratio-preserving dimensions no larger than 1280×720, a 30 fps target, and stereo 48 kHz AAC audio. It is not an approved visual-model input.
    - `audio.wav`: mono 16 kHz signed 16-bit little-endian PCM (`pcm_s16le`) analysis audio.
    - `timestamp-map.json`: a versioned affine target-time map from the rebased proxy/audio timeline to the source presentation timeline.
    - `preprocessing-manifest.json`: a privacy-bounded record of the source/upstream hashes, artifact metadata and hashes, contract/tool provenance, timeline observations/limitations, and the explicit **Not assessed** quality/applicability states. It contains no original path, source filename, raw tool output, transcript, behavioral feature, or score.
 4. VerityWorkbench probes and hashes the generated files, rechecks the source bytes, then atomically promotes the complete four-file bundle beneath the source asset as `Prepared/v1_<first-12-characters-of-contract-SHA-256>/`. The SQLite result stores exact SHA-256 hashes and byte lengths for all four artifacts, including the manifest. Existing immutable bundles are not overwritten.
-5. A successful profile shows **Media prepared — quality and applicability not assessed**. This is an engineering preprocessing result only; no transcription, feature extraction, face/voice assessment, training, inference, or scoring was performed.
+5. A successful profile shows **Media prepared — objective audio observations pending; quality and applicability not assessed**. This is an engineering preprocessing result only; no transcription, feature extraction, face/voice assessment, training, inference, or scoring was performed.
 
 Version-pinned, CPU-only preprocessing improves reproducibility but does not promise bit-identical output across machines. Recorded artifact hashes are authoritative; a differing output is never silently substituted for an accepted immutable bundle.
 
@@ -251,13 +252,35 @@ The timestamp map is intentionally modest: it rebases the selected streams to a 
 
 Select **Cancel Processing** to stop preprocessing. The app terminates the FFmpeg/ffprobe process tree, waits for exit, closes process and media handles, records no successful preprocessing result, promotes no partial bundle, and retains the unique `Processing` job folder for inspection or later verified cleanup. Promotion uses a durable journal around the short atomic directory move. On Refresh or restart, terminal/stale jobs reconcile a database-committed bundle, return an uncommitted bundle to its job when safe, or mark an inconsistent committed bundle as an integrity failure. Prepared results and readiness persist across app restarts.
 
+### Record objective analysis-audio observations
+
+1. Select a profile showing **Media prepared — objective audio observations pending; quality and applicability not assessed** or an objective-observation retry status.
+2. Select **Process Data**. The app verifies the accepted prepared bundle and scans the exact hash-verified `audio.wav` once for each unique active prepared media asset. The scan is implemented in bounded managed code and does not invoke FFmpeg or consume the training bucket, recording label, dependency-group label, profile display name, or source path.
+3. The frozen Milestone 8 contract accepts only the prepared contract's mono 16 kHz signed 16-bit little-endian PCM WAVE. It rechecks the data/sample count and duration, then records exact whole-file integer observations: minimum and maximum signed sample, absolute peak magnitude, positive, negative, and zero-valued sample counts, counts of the `-32768` and `+32767` endpoints, directly adjacent nonzero opposite-sign crossings, signed-sample sum, and squared-sample sum. Sums use arbitrary-precision integer accumulation and are persisted losslessly.
+4. A successful immutable result is stored only in `Profile/profile.sqlite`, keyed to the accepted audio hash/length and preprocessing and observation-contract provenance. Multiple active selections that reference the same prepared media asset reuse one result. No observation-result file is written under `Prepared`, `Features`, or another workspace folder; an ordinary bounded `Processing` job folder, when created for lifecycle/inspection, is not the result.
+5. A successful profile shows **Media prepared — objective audio observations recorded; quality and applicability not assessed**. Raw counts are not presented as user-interpretable evidence in this milestone; their exactness and persistence are verified by automated tests.
+
+These observations are arithmetic properties of the complete normalized PCM file. They do not identify speech regions, silence, pauses, clipping, a speaker, a language, a face, an identity, an authentic recording, a quality pass/fail result, model applicability, a behavioral feature, or training eligibility. They are not a score, probability, truth result, or deception result. Existing FFmpeg `astats` values in the preprocessing manifest remain preprocessing diagnostics and are not renamed or reused as the Milestone 8 observation result. Any future VAD, windowing, feature-extraction, or eligibility contract must be frozen and validated separately.
+
+Select **Cancel Processing** to stop the scan cooperatively. The active WAVE stream is closed, no partial success result is stored, the prepared bundle remains unchanged, and the profile remains prepared with objective observations pending so the work can be retried. An operational failure is likewise retryable and is not converted into a media-quality failure. A missing, changed, or out-of-bound accepted bundle artifact follows the existing persistent integrity-failure path. A hash-matching WAVE that is malformed or inconsistent with the frozen PCM contract is recorded as an objective-observation failure needing attention, not as evidence of source tampering or poor media quality. Interrupted jobs are recovered using the existing persistent job lifecycle; a completed result and its provenance survive app restarts.
+
+### Manual test for objective analysis-audio observations
+
+1. Complete the prepared-media review and recording-dependency-group manual checks below, then use a profile with one or more active prepared media assets. No additional software installation is required.
+2. Confirm the profile reports **objective audio observations pending**, **Process Data** is available, **Review Prepared Media** remains available, and **Query Profile** remains unavailable.
+3. Select **Process Data**. Confirm the visible status reports objective-observation progress by unique active prepared asset and **Cancel Processing** is available. One click must not start a later feature, training, or query phase.
+4. When practical, cancel while a sufficiently long asset is being scanned. Confirm processing stops, the profile remains prepared with observations pending, review still works, no partial success is reported, and a retry is available.
+5. Retry and allow the job to finish. Confirm the profile reports **objective audio observations recorded; quality and applicability not assessed**, prepared-media review still works, and no raw count, interpretation, transcript, quality/applicability verdict, feature, model, score, confidence, percentage, or query result is displayed.
+6. Restart the app and confirm the completed observation status persists without rerunning the scan. If several active selections reference identical prepared content, confirm the progress/summary counts it once; archiving all selections for an asset removes it from active pending work without deleting its retained result.
+7. Confirm no observation-result file was created under `Prepared` or `Features` and **Query Profile** remains unavailable. Exact aggregate values, overflow bounds, malformed/truncated WAVE rejection, artifact-integrity failure, cancellation, deduplication, and restart recovery are acceptance-tested automatically against generated PCM fixtures.
+
 ### Review prepared media
 
-1. Select a profile showing **Media prepared — quality and applicability not assessed**.
+1. Select a profile showing either pending or recorded objective audio observations while media quality and model applicability remain **Not assessed**.
 2. Select **Review Prepared Media**. The review loads each unique media asset once. When several training selections reference the same content, their recording labels and training conditions are aggregated for display rather than presented as independent media.
 3. Select an asset. Before assigning a player source, VerityWorkbench verifies the registered original's expected length and SHA-256 and verifies the complete accepted prepared bundle—`proxy.mp4`, `audio.wav`, `timestamp-map.json`, and `preprocessing-manifest.json`—against its stored paths, lengths, and hashes. Playback is refused if any required artifact is missing, changed, or outside the expected workspace boundary.
 4. Use the player to play, pause, or seek the verified `proxy.mp4`. New review players start at 50% volume. The review surface scrolls when the window is too short to display the video and its transport controls together. The player shows the current proxy **Target time** and an **Approximate source PTS** computed as the immutable v1 preprocessing result's source-timeline origin plus target time. That same origin and 1:1 affine mapping are recorded in the hash-verified v1 timestamp map. The source value is explicitly approximate: the 30 fps presentation proxy can select, duplicate, or omit source frames, so this display is not frame-accurate source lineage.
-5. Return to the main view when finished. Review creates no media, feature, transcript, model, or score and does not change `MediaPrepared`, `MediaQualityState.NotAssessed`, or `ModelApplicabilityState.NotAssessed`.
+5. Return to the main view when finished. Review creates no media, feature, transcript, model, or score and does not change the profile's current processing readiness, `MediaQualityState.NotAssessed`, or `ModelApplicabilityState.NotAssessed`.
 
 Review uses only `proxy.mp4` for presentation. It does not open `original.mp4` as the player source, use `audio.wav` as a behavioral input, approve the proxy for visual analysis, or assess identity, authenticity, spoken language, media quality, model applicability, truth, or deception.
 
@@ -267,7 +290,7 @@ Review uses only `proxy.mp4` for presentation. It does not open `original.mp4` a
 2. Select a profile whose preprocessing completed successfully, then select **Review Prepared Media**.
 3. Confirm each unique media asset appears once and that all linked recording labels/training conditions are shown with it.
 4. Select each asset and confirm playback starts only after verification, play/pause/seek work, and both **Target time** and **Approximate source PTS** update while playing and after seeking.
-5. Close and reopen the review, then restart the app and repeat the check. The profile must still show **Media prepared — quality and applicability not assessed**.
+5. Close and reopen the review, then restart the app and repeat the check. The profile must retain its prior objective-observation status while quality and applicability remain **Not assessed**.
 6. Confirm **Query Profile** remains unavailable and that no transcript, feature, model, confidence, percentage, or behavioral result is displayed or created.
 
 ### Recording dependency groups
@@ -300,7 +323,7 @@ Each profile's authoritative metadata database is stored inside its selected wor
 <profile-workspace>\Profile\profile.sqlite
 ```
 
-That SQLite database contains stable pseudonymous IDs, display names, normalized workspace/download roots, full local source-file paths, recording labels, training buckets, stable profile-scoped recording dependency-group IDs and editable labels, per-selection group assignments, archive/order metadata, source and derivative hashes, workspace-relative asset/artifact paths, ingest/validation/preprocessing job status and progress, normalized successful validation and preprocessing metadata/tool provenance, bounded sanitized failure states, readiness, and timestamps. It contains no video/audio bytes, raw probe JSON, raw FFmpeg output, frames, transcripts, model features, or scores.
+That SQLite database contains stable pseudonymous IDs, display names, normalized workspace/download roots, full local source-file paths, recording labels, training buckets, stable profile-scoped recording dependency-group IDs and editable labels, per-selection group assignments, archive/order metadata, source and derivative hashes, workspace-relative asset/artifact paths, ingest/validation/preprocessing/objective-observation job status and progress, normalized successful validation and preprocessing metadata/tool provenance, immutable exact whole-file PCM observations with their input/contract provenance, bounded sanitized failure states, readiness, and timestamps. It contains no video/audio bytes, raw probe JSON, raw FFmpeg output, frames, transcripts, model features, or scores.
 
 To find those user-selected workspaces after restart, the app keeps a minimal per-Windows-user locator catalog at:
 
@@ -349,6 +372,8 @@ Saving a valid draft creates only these fixed, human-readable top-level folders 
 ```
 
 If a separate download-staging folder is selected, that folder is also created if necessary. Later download and processing work will be confined to unique, bounded job subfolders. Folder names and paths are for human navigation only and must never become model features.
+
+Milestone 8 creates no observation-result artifact. Its immutable objective analysis-audio observation results live only in `Profile/profile.sqlite`; `Features` remains empty until a separately frozen future feature contract is implemented. A bounded `Processing` job folder may still exist for the ordinary inspectable job lifecycle, but it is not promoted or treated as an observation result.
 
 Do not place a workspace inside the source repository. Subject media, workspaces, processing artifacts, transcripts, numeric biometric features, and person-specific models are private local data and must never be committed.
 

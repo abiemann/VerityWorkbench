@@ -10,4 +10,5 @@ public sealed record StoredMediaAsset(
     string? ValidationFailure,
     string? PreprocessingFailure,
     DateTimeOffset CreatedAtUtc,
-    DateTimeOffset UpdatedAtUtc);
+    DateTimeOffset UpdatedAtUtc,
+    string? AudioObservationFailure = null);

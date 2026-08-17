@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 using Microsoft.Data.Sqlite;
 using VerityWorkbench.Core.Profiles;
 
@@ -6,7 +7,7 @@ namespace VerityWorkbench.Data.Profiles;
 
 public sealed class SqliteProfileStore
 {
-    private const int SchemaVersion = 6;
+    private const int SchemaVersion = 7;
     private const int MaximumStoredErrorLength = 2_048;
     private const int MaximumProbeTextLength = 4_096;
     private const string MediaIntegrityFailureReason =
@@ -301,6 +302,90 @@ public sealed class SqliteProfileStore
         PRAGMA user_version = 6;
         """;
 
+    private const string MigrateVersion6ToVersion7Sql = """
+        ALTER TABLE media_assets
+            ADD COLUMN audio_observation_failure TEXT NULL CHECK (
+                audio_observation_failure IS NULL OR length(audio_observation_failure) <= 2048);
+
+        CREATE TABLE audio_observation_results (
+            media_asset_id TEXT NOT NULL PRIMARY KEY,
+            analysis_audio_sha256 TEXT NOT NULL CHECK (length(analysis_audio_sha256) = 64),
+            analysis_audio_byte_length INTEGER NOT NULL CHECK (analysis_audio_byte_length > 0),
+            analysis_audio_sample_rate_hz INTEGER NOT NULL CHECK (analysis_audio_sample_rate_hz > 0),
+            analysis_audio_channel_count INTEGER NOT NULL CHECK (analysis_audio_channel_count > 0),
+            analysis_audio_sample_count INTEGER NOT NULL CHECK (analysis_audio_sample_count > 0),
+            analysis_audio_duration_microseconds INTEGER NOT NULL CHECK (
+                analysis_audio_duration_microseconds > 0),
+            preprocessing_contract_sha256 TEXT NOT NULL CHECK (
+                length(preprocessing_contract_sha256) = 64),
+            observation_contract_version TEXT NOT NULL CHECK (
+                length(observation_contract_version) BETWEEN 1 AND 4096),
+            observation_contract_sha256 TEXT NOT NULL CHECK (
+                length(observation_contract_sha256) = 64),
+            minimum_signed_sample INTEGER NOT NULL CHECK (
+                minimum_signed_sample BETWEEN -32768 AND 32767),
+            maximum_signed_sample INTEGER NOT NULL CHECK (
+                maximum_signed_sample BETWEEN -32768 AND 32767),
+            absolute_peak_sample INTEGER NOT NULL CHECK (
+                absolute_peak_sample BETWEEN 0 AND 32768),
+            positive_sample_count INTEGER NOT NULL CHECK (positive_sample_count >= 0),
+            negative_sample_count INTEGER NOT NULL CHECK (negative_sample_count >= 0),
+            zero_sample_count INTEGER NOT NULL CHECK (zero_sample_count >= 0),
+            positive_full_scale_sample_count INTEGER NOT NULL CHECK (
+                positive_full_scale_sample_count >= 0),
+            negative_full_scale_sample_count INTEGER NOT NULL CHECK (
+                negative_full_scale_sample_count >= 0),
+            adjacent_opposite_sign_crossing_count INTEGER NOT NULL CHECK (
+                adjacent_opposite_sign_crossing_count >= 0),
+            exact_sample_sum TEXT NOT NULL CHECK (length(exact_sample_sum) BETWEEN 1 AND 64),
+            exact_squared_sample_sum TEXT NOT NULL CHECK (
+                length(exact_squared_sample_sum) BETWEEN 1 AND 64),
+            media_quality_state TEXT NOT NULL CHECK (media_quality_state = 'NotAssessed'),
+            model_applicability_state TEXT NOT NULL CHECK (
+                model_applicability_state = 'NotAssessed'),
+            observed_utc TEXT NOT NULL,
+            CHECK (minimum_signed_sample <= maximum_signed_sample),
+            CHECK (positive_full_scale_sample_count <= positive_sample_count),
+            CHECK (negative_full_scale_sample_count <= negative_sample_count),
+            CHECK (adjacent_opposite_sign_crossing_count < analysis_audio_sample_count),
+            FOREIGN KEY (media_asset_id)
+                REFERENCES media_preprocessing_results(media_asset_id) ON DELETE CASCADE
+        );
+
+        CREATE TRIGGER audio_observation_results_immutable_update
+        BEFORE UPDATE ON audio_observation_results
+        BEGIN
+            SELECT RAISE(ABORT, 'Successful audio-observation results are immutable.');
+        END;
+
+        CREATE TABLE audio_observation_job_assets (
+            job_id TEXT NOT NULL,
+            media_asset_id TEXT NOT NULL,
+            analysis_audio_sha256 TEXT NOT NULL CHECK (length(analysis_audio_sha256) = 64),
+            analysis_audio_byte_length INTEGER NOT NULL CHECK (analysis_audio_byte_length > 0),
+            analysis_audio_sample_rate_hz INTEGER NOT NULL CHECK (analysis_audio_sample_rate_hz > 0),
+            analysis_audio_channel_count INTEGER NOT NULL CHECK (analysis_audio_channel_count > 0),
+            analysis_audio_sample_count INTEGER NOT NULL CHECK (analysis_audio_sample_count > 0),
+            analysis_audio_duration_microseconds INTEGER NOT NULL CHECK (
+                analysis_audio_duration_microseconds > 0),
+            preprocessing_contract_sha256 TEXT NOT NULL CHECK (
+                length(preprocessing_contract_sha256) = 64),
+            observation_contract_version TEXT NOT NULL CHECK (
+                length(observation_contract_version) BETWEEN 1 AND 4096),
+            observation_contract_sha256 TEXT NOT NULL CHECK (
+                length(observation_contract_sha256) = 64),
+            PRIMARY KEY (job_id, media_asset_id),
+            FOREIGN KEY (job_id) REFERENCES processing_jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY (media_asset_id)
+                REFERENCES media_preprocessing_results(media_asset_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX ix_audio_observation_job_assets_asset
+            ON audio_observation_job_assets(media_asset_id, job_id);
+
+        PRAGMA user_version = 7;
+        """;
+
     private readonly string _connectionString;
     private readonly SemaphoreSlim _initializationGate = new(1, 1);
     private volatile bool _initialized;
@@ -415,6 +500,17 @@ public sealed class SqliteProfileStore
                         connection,
                         transaction,
                         MigrateVersion5ToVersion6Sql,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                version = 6;
+            }
+
+            if (version < 7)
+            {
+                await ApplyMigrationStepAsync(
+                        connection,
+                        transaction,
+                        MigrateVersion6ToVersion7Sql,
                         cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -1625,6 +1721,354 @@ public sealed class SqliteProfileStore
         return persistedAssets;
     }
 
+    public async Task<StoredProcessingJob> StartAudioObservationJobAsync(
+        Guid profileId,
+        DateTimeOffset expectedUpdatedAtUtc,
+        Guid jobId,
+        string workspaceRelativePath,
+        string observationContractVersion,
+        string observationContractSha256,
+        DateTimeOffset startedAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateRequiredId(profileId, nameof(profileId));
+        ValidateRequiredId(jobId, nameof(jobId));
+        var normalizedJobPath = NormalizeBoundedWorkspaceRelativePath(
+            workspaceRelativePath,
+            "Processing",
+            nameof(workspaceRelativePath));
+        ValidateObservationContractVersion(
+            observationContractVersion,
+            nameof(observationContractVersion));
+        if (!IsLowercaseSha256(observationContractSha256))
+        {
+            throw new ArgumentException(
+                "The observation contract hash must be a lowercase SHA-256 value.",
+                nameof(observationContractSha256));
+        }
+
+        if (startedAtUtc <= expectedUpdatedAtUtc)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(startedAtUtc),
+                "The job timestamp must be later than the expected profile timestamp.");
+        }
+
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = await OpenConfiguredConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        using var transaction = connection.BeginTransaction(deferred: false);
+        if (await HasActiveJobAsync(connection, transaction, profileId, cancellationToken)
+            .ConfigureAwait(false))
+        {
+            throw new ProfileProcessingActiveException(profileId);
+        }
+
+        if (await HasUnlinkedActiveTrainingVideosAsync(
+                connection,
+                transaction,
+                profileId,
+                cancellationToken)
+            .ConfigureAwait(false))
+        {
+            throw new InvalidOperationException(
+                $"Profile '{profileId}' has active training videos that have not been ingested.");
+        }
+
+        var activeAssets = await ReadActiveMediaAssetsAsync(
+                connection,
+                transaction,
+                profileId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (activeAssets.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"Profile '{profileId}' has no active prepared media assets.");
+        }
+
+        var pendingAssets = new List<(StoredMediaAsset Asset, StoredMediaPreprocessingResult Prepared)>();
+        foreach (var asset in activeAssets)
+        {
+            if (asset.State != MediaAssetState.Prepared)
+            {
+                throw new InvalidOperationException(
+                    $"Media asset '{asset.Id}' is not in the prepared state required for audio observation.");
+            }
+
+            var prepared = await ReadMediaPreprocessingResultAsync(
+                    connection,
+                    transaction,
+                    asset.Id,
+                    cancellationToken)
+                .ConfigureAwait(false)
+                ?? throw new InvalidDataException(
+                    $"Prepared media asset '{asset.Id}' has no preprocessing result.");
+            var hasObservation = await AudioObservationResultExistsAsync(
+                    connection,
+                    transaction,
+                    asset.Id,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (hasObservation)
+            {
+                if (asset.AudioObservationFailure is not null)
+                {
+                    throw new InvalidDataException(
+                        $"Media asset '{asset.Id}' has inconsistent audio-observation state.");
+                }
+
+                continue;
+            }
+
+            pendingAssets.Add((asset, prepared));
+        }
+
+        if (pendingAssets.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"Profile '{profileId}' has no active media assets requiring audio observation.");
+        }
+
+        long totalBytes;
+        try
+        {
+            totalBytes = pendingAssets.Aggregate(
+                0L,
+                (total, item) => checked(total + item.Prepared.AnalysisAudioByteLength));
+        }
+        catch (OverflowException)
+        {
+            throw new InvalidDataException(
+                $"Profile '{profileId}' has an invalid analysis-audio byte total.");
+        }
+
+        var timestamp = FormatTimestamp(startedAtUtc);
+        await using (var updateProfile = connection.CreateCommand())
+        {
+            updateProfile.Transaction = transaction;
+            updateProfile.CommandText = """
+                UPDATE profiles
+                SET readiness = $readiness,
+                    updated_utc = $updatedUtc
+                WHERE id = $profileId
+                  AND updated_utc = $expectedUpdatedUtc;
+                """;
+            updateProfile.Parameters.AddWithValue(
+                "$readiness",
+                ProfileReadiness.ExtractingAudioObservations.ToString());
+            updateProfile.Parameters.AddWithValue("$updatedUtc", timestamp);
+            updateProfile.Parameters.AddWithValue("$profileId", profileId.ToString("D"));
+            updateProfile.Parameters.AddWithValue(
+                "$expectedUpdatedUtc",
+                FormatTimestamp(expectedUpdatedAtUtc));
+            var affected = await updateProfile.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            if (affected == 0)
+            {
+                if (!await ProfileExistsAsync(connection, transaction, profileId, cancellationToken)
+                    .ConfigureAwait(false))
+                {
+                    throw new KeyNotFoundException($"Profile '{profileId}' was not found.");
+                }
+
+                throw new ProfileConcurrencyConflictException(profileId, expectedUpdatedAtUtc);
+            }
+        }
+
+        var job = new StoredProcessingJob(
+            jobId,
+            profileId,
+            ProcessingJobKind.AudioObservationExtraction,
+            ProcessingJobState.Queued,
+            0,
+            pendingAssets.Count,
+            0,
+            totalBytes,
+            normalizedJobPath,
+            null,
+            startedAtUtc.ToUniversalTime(),
+            startedAtUtc.ToUniversalTime());
+        await InsertProcessingJobAsync(connection, transaction, job, cancellationToken)
+            .ConfigureAwait(false);
+        await InsertAudioObservationJobAssetsAsync(
+                connection,
+                transaction,
+                job.Id,
+                pendingAssets.Select(item => item.Prepared),
+                observationContractVersion,
+                observationContractSha256,
+                cancellationToken)
+            .ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return job;
+    }
+
+    public async Task<IReadOnlyList<StoredMediaAsset>> CompleteAudioObservationJobAsync(
+        Guid jobId,
+        IReadOnlyList<AudioObservationRegistration> registrations,
+        DateTimeOffset completedAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateRequiredId(jobId, nameof(jobId));
+        ArgumentNullException.ThrowIfNull(registrations);
+        var normalizedRegistrations = registrations
+            .Select(registration => registration with
+            {
+                FailureMessage = SanitizeAudioObservationFailure(registration.FailureMessage),
+            })
+            .ToArray();
+        foreach (var registration in normalizedRegistrations)
+        {
+            ValidateAudioObservationRegistration(registration);
+        }
+
+        if (normalizedRegistrations.Select(registration => registration.MediaAssetId).Distinct().Count() !=
+            normalizedRegistrations.Length)
+        {
+            throw new ArgumentException(
+                "A media asset may appear only once in an audio-observation batch.",
+                nameof(registrations));
+        }
+
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = await OpenConfiguredConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        using var transaction = connection.BeginTransaction(deferred: false);
+        var job = await ReadProcessingJobAsync(connection, transaction, jobId, cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Processing job '{jobId}' was not found.");
+        if (job.Kind != ProcessingJobKind.AudioObservationExtraction ||
+            job.State is not ProcessingJobState.Queued and not ProcessingJobState.Running)
+        {
+            throw new InvalidOperationException(
+                $"Processing job '{jobId}' is not an active audio-observation job.");
+        }
+
+        ValidateTimestampNotBefore(completedAtUtc, job.UpdatedAtUtc, nameof(completedAtUtc));
+        var snapshots = await ReadAudioObservationJobAssetsAsync(
+                connection,
+                transaction,
+                job.Id,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var suppliedAssetIds = normalizedRegistrations
+            .Select(registration => registration.MediaAssetId)
+            .ToHashSet();
+        if (snapshots.Count != job.TotalItemCount)
+        {
+            throw new InvalidDataException(
+                $"Audio-observation job '{job.Id}' has an inconsistent asset snapshot.");
+        }
+
+        if (snapshots.Count != normalizedRegistrations.Length ||
+            !snapshots.All(snapshot => suppliedAssetIds.Contains(snapshot.MediaAssetId)))
+        {
+            throw new ArgumentException(
+                "The audio-observation batch must contain exactly the media assets snapshotted by the job.",
+                nameof(registrations));
+        }
+
+        var snapshotsByAssetId = snapshots.ToDictionary(snapshot => snapshot.MediaAssetId);
+        var persistedAssets = new List<StoredMediaAsset>(normalizedRegistrations.Length);
+        foreach (var registration in normalizedRegistrations)
+        {
+            var snapshot = snapshotsByAssetId[registration.MediaAssetId];
+            var asset = await ReadMediaAssetByIdAsync(
+                    connection,
+                    transaction,
+                    registration.MediaAssetId,
+                    cancellationToken)
+                .ConfigureAwait(false)
+                ?? throw new KeyNotFoundException(
+                    $"Media asset '{registration.MediaAssetId}' was not found.");
+            if (asset.ProfileId != job.ProfileId)
+            {
+                throw new InvalidOperationException(
+                    $"Media asset '{asset.Id}' does not belong to audio-observation job '{job.Id}'.");
+            }
+
+            if (asset.State != MediaAssetState.Prepared ||
+                await AudioObservationResultExistsAsync(
+                        connection,
+                        transaction,
+                        asset.Id,
+                        cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                throw new AudioObservationConflictException(asset.Id);
+            }
+
+            var prepared = await ReadMediaPreprocessingResultAsync(
+                    connection,
+                    transaction,
+                    asset.Id,
+                    cancellationToken)
+                .ConfigureAwait(false)
+                ?? throw new InvalidDataException(
+                    $"Prepared media asset '{asset.Id}' has no preprocessing result.");
+            ValidateAudioObservationSnapshotForPreparedResult(snapshot, prepared);
+
+            if (registration.Result is not null)
+            {
+                if (registration.Result.ObservedAtUtc < job.CreatedAtUtc ||
+                    registration.Result.ObservedAtUtc > completedAtUtc)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(registrations),
+                        "An audio-observation timestamp must fall within its processing job.");
+                }
+
+                ValidateAudioObservationResultForSnapshot(registration.Result, snapshot);
+                await InsertAudioObservationResultAsync(
+                        connection,
+                        transaction,
+                        registration.Result,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            await SetMediaAssetAudioObservationAsync(
+                    connection,
+                    transaction,
+                    asset.Id,
+                    registration.FailureMessage,
+                    completedAtUtc,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            persistedAssets.Add(asset with
+            {
+                AudioObservationFailure = registration.FailureMessage,
+                UpdatedAtUtc = completedAtUtc.ToUniversalTime(),
+            });
+        }
+
+        await SetJobTerminalAsync(
+                connection,
+                transaction,
+                job,
+                ProcessingJobState.Completed,
+                error: null,
+                completedAtUtc,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var readiness = await DetermineMediaReadinessAsync(
+                connection,
+                transaction,
+                job.ProfileId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        await SetProfileReadinessAsync(
+                connection,
+                transaction,
+                job.ProfileId,
+                readiness,
+                completedAtUtc,
+                cancellationToken)
+            .ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return persistedAssets;
+    }
+
     public async Task<IReadOnlyList<StoredMediaAsset>> MarkMediaAssetsIntegrityFailedAsync(
         Guid profileId,
         DateTimeOffset expectedUpdatedAtUtc,
@@ -1742,6 +2186,7 @@ public sealed class SqliteProfileStore
             State = MediaAssetState.IntegrityFailed,
             ValidationFailure = MediaIntegrityFailureReason,
             PreprocessingFailure = null,
+            AudioObservationFailure = null,
             UpdatedAtUtc = detectedAt,
         }).ToArray();
     }
@@ -1780,7 +2225,9 @@ public sealed class SqliteProfileStore
                 ? SanitizeValidationFailure(error)
                 : job.Kind == ProcessingJobKind.MediaPreprocessing
                     ? SanitizePreprocessingFailure(error)
-                : SanitizeError(error)
+                    : job.Kind == ProcessingJobKind.AudioObservationExtraction
+                        ? SanitizeAudioObservationFailure(error)
+                        : SanitizeError(error)
             : null;
 
         await SetJobTerminalAsync(
@@ -1891,6 +2338,50 @@ public sealed class SqliteProfileStore
         await using var connection = await OpenConfiguredConnectionAsync(cancellationToken)
             .ConfigureAwait(false);
         return await ReadMediaPreprocessingResultsAsync(connection, profileId, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<StoredAudioObservationJobAsset>> GetAudioObservationJobAssetsAsync(
+        Guid jobId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateRequiredId(jobId, nameof(jobId));
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = await OpenConfiguredConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return await ReadAudioObservationJobAssetsAsync(
+                connection,
+                transaction: null,
+                jobId,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<StoredAudioObservationResult?> GetAudioObservationResultAsync(
+        Guid mediaAssetId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateRequiredId(mediaAssetId, nameof(mediaAssetId));
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = await OpenConfiguredConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return await ReadAudioObservationResultAsync(
+                connection,
+                transaction: null,
+                mediaAssetId,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<StoredAudioObservationResult>> GetAudioObservationResultsAsync(
+        Guid profileId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateRequiredId(profileId, nameof(profileId));
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = await OpenConfiguredConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return await ReadAudioObservationResultsAsync(connection, profileId, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -2295,7 +2786,8 @@ public sealed class SqliteProfileStore
                 asset.probe_failure,
                 asset.preprocessing_failure,
                 asset.created_utc,
-                asset.updated_utc
+                asset.updated_utc,
+                asset.audio_observation_failure
             FROM training_videos AS video
             INNER JOIN media_assets AS asset ON asset.id = video.media_asset_id
             WHERE video.profile_id = $profileId
@@ -2376,7 +2868,8 @@ public sealed class SqliteProfileStore
                 asset.probe_failure,
                 asset.preprocessing_failure,
                 asset.created_utc,
-                asset.updated_utc
+                asset.updated_utc,
+                asset.audio_observation_failure
             FROM media_validation_job_assets AS item
             INNER JOIN media_assets AS asset ON asset.id = item.media_asset_id
             WHERE item.job_id = $jobId
@@ -2456,7 +2949,8 @@ public sealed class SqliteProfileStore
                 asset.probe_failure,
                 asset.preprocessing_failure,
                 asset.created_utc,
-                asset.updated_utc
+                asset.updated_utc,
+                asset.audio_observation_failure
             FROM media_preprocessing_job_assets AS item
             INNER JOIN media_assets AS asset ON asset.id = item.media_asset_id
             WHERE item.job_id = $jobId
@@ -2473,6 +2967,127 @@ public sealed class SqliteProfileStore
         return assets;
     }
 
+    private static async Task InsertAudioObservationJobAssetsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid jobId,
+        IEnumerable<StoredMediaPreprocessingResult> preparedResults,
+        string observationContractVersion,
+        string observationContractSha256,
+        CancellationToken cancellationToken)
+    {
+        foreach (var prepared in preparedResults)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO audio_observation_job_assets (
+                    job_id,
+                    media_asset_id,
+                    analysis_audio_sha256,
+                    analysis_audio_byte_length,
+                    analysis_audio_sample_rate_hz,
+                    analysis_audio_channel_count,
+                    analysis_audio_sample_count,
+                    analysis_audio_duration_microseconds,
+                    preprocessing_contract_sha256,
+                    observation_contract_version,
+                    observation_contract_sha256)
+                VALUES (
+                    $jobId,
+                    $mediaAssetId,
+                    $analysisAudioSha256,
+                    $analysisAudioByteLength,
+                    $analysisAudioSampleRateHz,
+                    $analysisAudioChannelCount,
+                    $analysisAudioSampleCount,
+                    $analysisAudioDurationMicroseconds,
+                    $preprocessingContractSha256,
+                    $observationContractVersion,
+                    $observationContractSha256);
+                """;
+            command.Parameters.AddWithValue("$jobId", jobId.ToString("D"));
+            command.Parameters.AddWithValue("$mediaAssetId", prepared.MediaAssetId.ToString("D"));
+            command.Parameters.AddWithValue("$analysisAudioSha256", prepared.AnalysisAudioSha256);
+            command.Parameters.AddWithValue("$analysisAudioByteLength", prepared.AnalysisAudioByteLength);
+            command.Parameters.AddWithValue(
+                "$analysisAudioSampleRateHz",
+                prepared.AnalysisAudioSampleRateHz);
+            command.Parameters.AddWithValue(
+                "$analysisAudioChannelCount",
+                prepared.AnalysisAudioChannelCount);
+            command.Parameters.AddWithValue("$analysisAudioSampleCount", prepared.AnalysisAudioSampleCount);
+            command.Parameters.AddWithValue(
+                "$analysisAudioDurationMicroseconds",
+                prepared.AnalysisAudioDurationMicroseconds);
+            command.Parameters.AddWithValue(
+                "$preprocessingContractSha256",
+                prepared.PreprocessingContractSha256);
+            command.Parameters.AddWithValue("$observationContractVersion", observationContractVersion);
+            command.Parameters.AddWithValue("$observationContractSha256", observationContractSha256);
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<IReadOnlyList<StoredAudioObservationJobAsset>> ReadAudioObservationJobAssetsAsync(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        Guid jobId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT
+                item.job_id,
+                item.media_asset_id,
+                prepared.analysis_audio_workspace_relative_path,
+                item.analysis_audio_sha256,
+                item.analysis_audio_byte_length,
+                item.analysis_audio_sample_rate_hz,
+                item.analysis_audio_channel_count,
+                item.analysis_audio_sample_count,
+                item.analysis_audio_duration_microseconds,
+                item.preprocessing_contract_sha256,
+                item.observation_contract_version,
+                item.observation_contract_sha256
+            FROM audio_observation_job_assets AS item
+            INNER JOIN media_preprocessing_results AS prepared
+                ON prepared.media_asset_id = item.media_asset_id
+            WHERE item.job_id = $jobId
+            ORDER BY item.media_asset_id;
+            """;
+        command.Parameters.AddWithValue("$jobId", jobId.ToString("D"));
+        var assets = new List<StoredAudioObservationJobAsset>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var mediaAssetId = Guid.Parse(reader.GetString(1));
+            var analysisAudioPath = ValidateStoredRelativePath(
+                reader.GetString(2),
+                "Media",
+                "analysis audio",
+                mediaAssetId.ToString("D"));
+            var asset = new StoredAudioObservationJobAsset(
+                Guid.Parse(reader.GetString(0)),
+                mediaAssetId,
+                analysisAudioPath,
+                reader.GetString(3),
+                reader.GetInt64(4),
+                reader.GetInt32(5),
+                reader.GetInt32(6),
+                reader.GetInt64(7),
+                reader.GetInt64(8),
+                reader.GetString(9),
+                reader.GetString(10),
+                reader.GetString(11));
+            ValidateAudioObservationJobAsset(asset);
+            assets.Add(asset);
+        }
+
+        return assets;
+    }
+
     private static async Task<StoredMediaAsset?> ReadMediaAssetByIdAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -2483,7 +3098,8 @@ public sealed class SqliteProfileStore
         command.Transaction = transaction;
         command.CommandText = """
             SELECT id, profile_id, sha256, workspace_relative_path, byte_length, state,
-                   probe_failure, preprocessing_failure, created_utc, updated_utc
+                   probe_failure, preprocessing_failure, created_utc, updated_utc,
+                   audio_observation_failure
             FROM media_assets
             WHERE id = $id;
             """;
@@ -2532,6 +3148,25 @@ public sealed class SqliteProfileStore
             CultureInfo.InvariantCulture) != 0;
     }
 
+    private static async Task<bool> AudioObservationResultExistsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid mediaAssetId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT COUNT(*)
+            FROM audio_observation_results
+            WHERE media_asset_id = $mediaAssetId;
+            """;
+        command.Parameters.AddWithValue("$mediaAssetId", mediaAssetId.ToString("D"));
+        return Convert.ToInt64(
+            await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
+            CultureInfo.InvariantCulture) != 0;
+    }
+
     private static async Task SetMediaAssetValidationAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -2548,6 +3183,7 @@ public sealed class SqliteProfileStore
             SET state = $state,
                 probe_failure = $probeFailure,
                 preprocessing_failure = NULL,
+                audio_observation_failure = NULL,
                 updated_utc = $updatedUtc
             WHERE id = $id
               AND state IN ('AwaitingProbe', 'ValidationFailed');
@@ -2578,6 +3214,7 @@ public sealed class SqliteProfileStore
             SET state = $state,
                 probe_failure = $probeFailure,
                 preprocessing_failure = NULL,
+                audio_observation_failure = NULL,
                 updated_utc = $updatedUtc
             WHERE id = $id;
             """;
@@ -2607,6 +3244,7 @@ public sealed class SqliteProfileStore
             SET state = $state,
                 probe_failure = NULL,
                 preprocessing_failure = $preprocessingFailure,
+                audio_observation_failure = NULL,
                 updated_utc = $updatedUtc
             WHERE id = $id
               AND state IN ('Validated', 'PreprocessingFailed');
@@ -2620,6 +3258,42 @@ public sealed class SqliteProfileStore
         if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
         {
             throw new MediaPreprocessingConflictException(mediaAssetId);
+        }
+    }
+
+    private static async Task SetMediaAssetAudioObservationAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid mediaAssetId,
+        string? failure,
+        DateTimeOffset timestamp,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE media_assets
+            SET audio_observation_failure = $failure,
+                updated_utc = $updatedUtc
+            WHERE id = $id
+              AND state = 'Prepared'
+              AND (
+                  ($failure IS NULL AND EXISTS (
+                      SELECT 1
+                      FROM audio_observation_results AS observation
+                      WHERE observation.media_asset_id = media_assets.id))
+                  OR
+                  ($failure IS NOT NULL AND NOT EXISTS (
+                      SELECT 1
+                      FROM audio_observation_results AS observation
+                      WHERE observation.media_asset_id = media_assets.id)));
+            """;
+        command.Parameters.AddWithValue("$failure", (object?)failure ?? DBNull.Value);
+        command.Parameters.AddWithValue("$updatedUtc", FormatTimestamp(timestamp));
+        command.Parameters.AddWithValue("$id", mediaAssetId.ToString("D"));
+        if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
+        {
+            throw new AudioObservationConflictException(mediaAssetId);
         }
     }
 
@@ -3270,6 +3944,235 @@ public sealed class SqliteProfileStore
         return result;
     }
 
+    private static async Task InsertAudioObservationResultAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        StoredAudioObservationResult result,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO audio_observation_results (
+                media_asset_id,
+                analysis_audio_sha256,
+                analysis_audio_byte_length,
+                analysis_audio_sample_rate_hz,
+                analysis_audio_channel_count,
+                analysis_audio_sample_count,
+                analysis_audio_duration_microseconds,
+                preprocessing_contract_sha256,
+                observation_contract_version,
+                observation_contract_sha256,
+                minimum_signed_sample,
+                maximum_signed_sample,
+                absolute_peak_sample,
+                positive_sample_count,
+                negative_sample_count,
+                zero_sample_count,
+                positive_full_scale_sample_count,
+                negative_full_scale_sample_count,
+                adjacent_opposite_sign_crossing_count,
+                exact_sample_sum,
+                exact_squared_sample_sum,
+                media_quality_state,
+                model_applicability_state,
+                observed_utc)
+            VALUES (
+                $mediaAssetId,
+                $analysisAudioSha256,
+                $analysisAudioByteLength,
+                $analysisAudioSampleRateHz,
+                $analysisAudioChannelCount,
+                $analysisAudioSampleCount,
+                $analysisAudioDurationMicroseconds,
+                $preprocessingContractSha256,
+                $observationContractVersion,
+                $observationContractSha256,
+                $minimumSignedSample,
+                $maximumSignedSample,
+                $absolutePeakSample,
+                $positiveSampleCount,
+                $negativeSampleCount,
+                $zeroSampleCount,
+                $positiveFullScaleSampleCount,
+                $negativeFullScaleSampleCount,
+                $adjacentOppositeSignCrossingCount,
+                $exactSampleSum,
+                $exactSquaredSampleSum,
+                $mediaQualityState,
+                $modelApplicabilityState,
+                $observedUtc);
+            """;
+        command.Parameters.AddWithValue("$mediaAssetId", result.MediaAssetId.ToString("D"));
+        command.Parameters.AddWithValue("$analysisAudioSha256", result.AnalysisAudioSha256);
+        command.Parameters.AddWithValue("$analysisAudioByteLength", result.AnalysisAudioByteLength);
+        command.Parameters.AddWithValue("$analysisAudioSampleRateHz", result.AnalysisAudioSampleRateHz);
+        command.Parameters.AddWithValue("$analysisAudioChannelCount", result.AnalysisAudioChannelCount);
+        command.Parameters.AddWithValue("$analysisAudioSampleCount", result.AnalysisAudioSampleCount);
+        command.Parameters.AddWithValue(
+            "$analysisAudioDurationMicroseconds",
+            result.AnalysisAudioDurationMicroseconds);
+        command.Parameters.AddWithValue(
+            "$preprocessingContractSha256",
+            result.PreprocessingContractSha256);
+        command.Parameters.AddWithValue(
+            "$observationContractVersion",
+            result.ObservationContractVersion);
+        command.Parameters.AddWithValue(
+            "$observationContractSha256",
+            result.ObservationContractSha256);
+        command.Parameters.AddWithValue("$minimumSignedSample", result.MinimumSignedSample);
+        command.Parameters.AddWithValue("$maximumSignedSample", result.MaximumSignedSample);
+        command.Parameters.AddWithValue("$absolutePeakSample", result.AbsolutePeakSample);
+        command.Parameters.AddWithValue("$positiveSampleCount", result.PositiveSampleCount);
+        command.Parameters.AddWithValue("$negativeSampleCount", result.NegativeSampleCount);
+        command.Parameters.AddWithValue("$zeroSampleCount", result.ZeroSampleCount);
+        command.Parameters.AddWithValue(
+            "$positiveFullScaleSampleCount",
+            result.PositiveFullScaleSampleCount);
+        command.Parameters.AddWithValue(
+            "$negativeFullScaleSampleCount",
+            result.NegativeFullScaleSampleCount);
+        command.Parameters.AddWithValue(
+            "$adjacentOppositeSignCrossingCount",
+            result.AdjacentOppositeSignCrossingCount);
+        command.Parameters.AddWithValue("$exactSampleSum", result.ExactSampleSum);
+        command.Parameters.AddWithValue("$exactSquaredSampleSum", result.ExactSquaredSampleSum);
+        command.Parameters.AddWithValue("$mediaQualityState", result.MediaQualityState.ToString());
+        command.Parameters.AddWithValue(
+            "$modelApplicabilityState",
+            result.ModelApplicabilityState.ToString());
+        command.Parameters.AddWithValue("$observedUtc", FormatTimestamp(result.ObservedAtUtc));
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<StoredAudioObservationResult?> ReadAudioObservationResultAsync(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        Guid mediaAssetId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = AudioObservationResultSelectSql + " WHERE result.media_asset_id = $mediaAssetId;";
+        command.Parameters.AddWithValue("$mediaAssetId", mediaAssetId.ToString("D"));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+            ? MapAudioObservationResult(reader)
+            : null;
+    }
+
+    private static async Task<IReadOnlyList<StoredAudioObservationResult>> ReadAudioObservationResultsAsync(
+        SqliteConnection connection,
+        Guid profileId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = AudioObservationResultSelectSql +
+            " WHERE asset.profile_id = $profileId ORDER BY result.observed_utc, result.media_asset_id;";
+        command.Parameters.AddWithValue("$profileId", profileId.ToString("D"));
+        var results = new List<StoredAudioObservationResult>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            results.Add(MapAudioObservationResult(reader));
+        }
+
+        return results;
+    }
+
+    private const string AudioObservationResultSelectSql = """
+        SELECT
+            result.media_asset_id,
+            result.analysis_audio_sha256,
+            result.analysis_audio_byte_length,
+            result.analysis_audio_sample_rate_hz,
+            result.analysis_audio_channel_count,
+            result.analysis_audio_sample_count,
+            result.analysis_audio_duration_microseconds,
+            result.preprocessing_contract_sha256,
+            result.observation_contract_version,
+            result.observation_contract_sha256,
+            result.minimum_signed_sample,
+            result.maximum_signed_sample,
+            result.absolute_peak_sample,
+            result.positive_sample_count,
+            result.negative_sample_count,
+            result.zero_sample_count,
+            result.positive_full_scale_sample_count,
+            result.negative_full_scale_sample_count,
+            result.adjacent_opposite_sign_crossing_count,
+            result.exact_sample_sum,
+            result.exact_squared_sample_sum,
+            result.media_quality_state,
+            result.model_applicability_state,
+            result.observed_utc
+        FROM audio_observation_results AS result
+        INNER JOIN media_assets AS asset ON asset.id = result.media_asset_id
+        """;
+
+    private static StoredAudioObservationResult MapAudioObservationResult(SqliteDataReader reader)
+    {
+        var qualityText = reader.GetString(21);
+        if (!Enum.TryParse<MediaQualityState>(qualityText, ignoreCase: false, out var qualityState) ||
+            !Enum.IsDefined(qualityState))
+        {
+            throw new InvalidDataException(
+                $"Media asset '{reader.GetString(0)}' has unsupported media-quality state '{qualityText}'.");
+        }
+
+        var applicabilityText = reader.GetString(22);
+        if (!Enum.TryParse<ModelApplicabilityState>(
+                applicabilityText,
+                ignoreCase: false,
+                out var applicabilityState) ||
+            !Enum.IsDefined(applicabilityState))
+        {
+            throw new InvalidDataException(
+                $"Media asset '{reader.GetString(0)}' has unsupported model-applicability state " +
+                $"'{applicabilityText}'.");
+        }
+
+        var result = new StoredAudioObservationResult(
+            Guid.Parse(reader.GetString(0)),
+            reader.GetString(1),
+            reader.GetInt64(2),
+            reader.GetInt32(3),
+            reader.GetInt32(4),
+            reader.GetInt64(5),
+            reader.GetInt64(6),
+            reader.GetString(7),
+            reader.GetString(8),
+            reader.GetString(9),
+            reader.GetInt32(10),
+            reader.GetInt32(11),
+            reader.GetInt32(12),
+            reader.GetInt64(13),
+            reader.GetInt64(14),
+            reader.GetInt64(15),
+            reader.GetInt64(16),
+            reader.GetInt64(17),
+            reader.GetInt64(18),
+            reader.GetString(19),
+            reader.GetString(20),
+            qualityState,
+            applicabilityState,
+            ParseTimestamp(reader.GetString(23)));
+        try
+        {
+            ValidateAudioObservationResult(result);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new InvalidDataException(
+                $"Media asset '{result.MediaAssetId}' has an invalid stored audio-observation result.",
+                exception);
+        }
+
+        return result;
+    }
+
     private static async Task<StoredMediaAsset?> ReadMediaAssetByHashAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -3281,7 +4184,8 @@ public sealed class SqliteProfileStore
         command.Transaction = transaction;
         command.CommandText = """
             SELECT id, profile_id, sha256, workspace_relative_path, byte_length, state,
-                   probe_failure, preprocessing_failure, created_utc, updated_utc
+                   probe_failure, preprocessing_failure, created_utc, updated_utc,
+                   audio_observation_failure
             FROM media_assets
             WHERE profile_id = $profileId
               AND sha256 = $sha256;
@@ -3305,7 +4209,8 @@ public sealed class SqliteProfileStore
         command.Transaction = transaction;
         command.CommandText = """
             SELECT id, profile_id, sha256, workspace_relative_path, byte_length, state,
-                   probe_failure, preprocessing_failure, created_utc, updated_utc
+                   probe_failure, preprocessing_failure, created_utc, updated_utc,
+                   audio_observation_failure
             FROM media_assets
             WHERE profile_id = $profileId
               AND workspace_relative_path = $workspaceRelativePath COLLATE NOCASE;
@@ -3326,7 +4231,8 @@ public sealed class SqliteProfileStore
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT id, profile_id, sha256, workspace_relative_path, byte_length, state,
-                   probe_failure, preprocessing_failure, created_utc, updated_utc
+                   probe_failure, preprocessing_failure, created_utc, updated_utc,
+                   audio_observation_failure
             FROM media_assets
             WHERE profile_id = $profileId
             ORDER BY created_utc, id;
@@ -3394,6 +4300,22 @@ public sealed class SqliteProfileStore
                 $"Media asset '{reader.GetString(0)}' has inconsistent preprocessing status and failure detail.");
         }
 
+        var audioObservationFailure = reader.IsDBNull(10) ? null : reader.GetString(10);
+        if (!string.Equals(
+                audioObservationFailure,
+                SanitizeAudioObservationFailure(audioObservationFailure),
+                StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                $"Media asset '{reader.GetString(0)}' has an invalid stored audio-observation failure.");
+        }
+
+        if (audioObservationFailure is not null && state != MediaAssetState.Prepared)
+        {
+            throw new InvalidDataException(
+                $"Media asset '{reader.GetString(0)}' has inconsistent audio-observation failure detail.");
+        }
+
         return new StoredMediaAsset(
             Guid.Parse(reader.GetString(0)),
             Guid.Parse(reader.GetString(1)),
@@ -3408,7 +4330,8 @@ public sealed class SqliteProfileStore
             probeFailure,
             preprocessingFailure,
             ParseTimestamp(reader.GetString(8)),
-            ParseTimestamp(reader.GetString(9)));
+            ParseTimestamp(reader.GetString(9)),
+            audioObservationFailure);
     }
 
     private static async Task InsertMediaAssetAsync(
@@ -3612,7 +4535,9 @@ public sealed class SqliteProfileStore
         DateTimeOffset timestamp,
         CancellationToken cancellationToken)
     {
-        var readiness = job.Kind is ProcessingJobKind.MediaValidation or ProcessingJobKind.MediaPreprocessing
+        var readiness = job.Kind is ProcessingJobKind.MediaValidation
+            or ProcessingJobKind.MediaPreprocessing
+            or ProcessingJobKind.AudioObservationExtraction
             ? await DetermineMediaReadinessAsync(
                     connection,
                     transaction,
@@ -3651,10 +4576,18 @@ public sealed class SqliteProfileStore
                 SUM(CASE WHEN asset.state = 'Prepared' AND prepared.media_asset_id IS NOT NULL
                     THEN 1 ELSE 0 END),
                 SUM(CASE WHEN asset.state != 'Prepared' AND prepared.media_asset_id IS NOT NULL
-                    THEN 1 ELSE 0 END)
+                    THEN 1 ELSE 0 END),
+                SUM(CASE WHEN asset.audio_observation_failure IS NOT NULL THEN 1 ELSE 0 END),
+                SUM(CASE WHEN asset.state = 'Prepared' AND observation.media_asset_id IS NOT NULL
+                    THEN 1 ELSE 0 END),
+                SUM(CASE WHEN asset.state != 'Prepared' AND observation.media_asset_id IS NOT NULL
+                    THEN 1 ELSE 0 END),
+                SUM(CASE WHEN asset.audio_observation_failure IS NOT NULL
+                    AND observation.media_asset_id IS NOT NULL THEN 1 ELSE 0 END)
             FROM training_videos AS video
             LEFT JOIN media_assets AS asset ON asset.id = video.media_asset_id
             LEFT JOIN media_preprocessing_results AS prepared ON prepared.media_asset_id = asset.id
+            LEFT JOIN audio_observation_results AS observation ON observation.media_asset_id = asset.id
             WHERE video.profile_id = $profileId
               AND video.is_archived = 0;
             """;
@@ -3675,6 +4608,10 @@ public sealed class SqliteProfileStore
         var integrityFailedCount = reader.IsDBNull(7) ? 0 : reader.GetInt64(7);
         var preparedResultCount = reader.IsDBNull(8) ? 0 : reader.GetInt64(8);
         var unexpectedPreparedResultCount = reader.IsDBNull(9) ? 0 : reader.GetInt64(9);
+        var audioObservationFailureCount = reader.IsDBNull(10) ? 0 : reader.GetInt64(10);
+        var audioObservationResultCount = reader.IsDBNull(11) ? 0 : reader.GetInt64(11);
+        var unexpectedAudioObservationResultCount = reader.IsDBNull(12) ? 0 : reader.GetInt64(12);
+        var conflictingAudioObservationCount = reader.IsDBNull(13) ? 0 : reader.GetInt64(13);
         if (integrityFailedCount != 0)
         {
             return ProfileReadiness.MediaIntegrityFailed;
@@ -3709,6 +4646,23 @@ public sealed class SqliteProfileStore
             preparedResultCount == activeCount &&
             unexpectedPreparedResultCount == 0)
         {
+            if (unexpectedAudioObservationResultCount != 0 ||
+                conflictingAudioObservationCount != 0)
+            {
+                throw new InvalidDataException(
+                    $"Profile '{profileId}' has inconsistent audio-observation states.");
+            }
+
+            if (audioObservationFailureCount != 0)
+            {
+                return ProfileReadiness.AudioObservationFailed;
+            }
+
+            if (audioObservationResultCount == activeCount)
+            {
+                return ProfileReadiness.AudioObserved;
+            }
+
             return ProfileReadiness.MediaPrepared;
         }
 
@@ -4571,6 +5525,296 @@ public sealed class SqliteProfileStore
             nameof(result.ManifestWorkspaceRelativePath));
     }
 
+    private static void ValidateAudioObservationRegistration(AudioObservationRegistration registration)
+    {
+        ArgumentNullException.ThrowIfNull(registration);
+        ValidateRequiredId(registration.MediaAssetId, nameof(registration.MediaAssetId));
+        if (registration.Result is not null)
+        {
+            if (registration.Result.MediaAssetId != registration.MediaAssetId)
+            {
+                throw new ArgumentException(
+                    "A successful audio observation requires a matching result.",
+                    nameof(registration));
+            }
+
+            if (registration.FailureMessage is not null)
+            {
+                throw new ArgumentException(
+                    "A successful audio observation cannot include a failure message.",
+                    nameof(registration));
+            }
+
+            ValidateAudioObservationResult(registration.Result);
+            return;
+        }
+
+        if (registration.FailureMessage is null)
+        {
+            throw new ArgumentException(
+                "A failed audio observation requires a sanitized failure message and no result.",
+                nameof(registration));
+        }
+    }
+
+    private static void ValidateAudioObservationJobAsset(StoredAudioObservationJobAsset asset)
+    {
+        ValidateRequiredId(asset.JobId, nameof(asset.JobId));
+        ValidateRequiredId(asset.MediaAssetId, nameof(asset.MediaAssetId));
+        ValidateObservationContractVersion(
+            asset.ObservationContractVersion,
+            nameof(asset.ObservationContractVersion));
+        if (!IsLowercaseSha256(asset.AnalysisAudioSha256) ||
+            !IsLowercaseSha256(asset.PreprocessingContractSha256) ||
+            !IsLowercaseSha256(asset.ObservationContractSha256))
+        {
+            throw new ArgumentException(
+                "Audio-observation snapshot hashes must be lowercase SHA-256 values.",
+                nameof(asset));
+        }
+
+        if (asset.AnalysisAudioByteLength <= 0 ||
+            asset.AnalysisAudioSampleRateHz <= 0 ||
+            asset.AnalysisAudioChannelCount <= 0 ||
+            asset.AnalysisAudioSampleCount <= 0 ||
+            asset.AnalysisAudioDurationMicroseconds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(asset),
+                "Audio-observation snapshot geometry and timing values must be positive.");
+        }
+    }
+
+    private static void ValidateAudioObservationSnapshotForPreparedResult(
+        StoredAudioObservationJobAsset snapshot,
+        StoredMediaPreprocessingResult prepared)
+    {
+        if (snapshot.MediaAssetId != prepared.MediaAssetId ||
+            !string.Equals(
+                snapshot.AnalysisAudioSha256,
+                prepared.AnalysisAudioSha256,
+                StringComparison.Ordinal) ||
+            snapshot.AnalysisAudioByteLength != prepared.AnalysisAudioByteLength ||
+            snapshot.AnalysisAudioSampleRateHz != prepared.AnalysisAudioSampleRateHz ||
+            snapshot.AnalysisAudioChannelCount != prepared.AnalysisAudioChannelCount ||
+            snapshot.AnalysisAudioSampleCount != prepared.AnalysisAudioSampleCount ||
+            snapshot.AnalysisAudioDurationMicroseconds != prepared.AnalysisAudioDurationMicroseconds ||
+            !string.Equals(
+                snapshot.PreprocessingContractSha256,
+                prepared.PreprocessingContractSha256,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                $"Audio-observation snapshot for media asset '{snapshot.MediaAssetId}' no longer matches its immutable preprocessing result.");
+        }
+    }
+
+    private static void ValidateAudioObservationResultForSnapshot(
+        StoredAudioObservationResult result,
+        StoredAudioObservationJobAsset snapshot)
+    {
+        if (result.MediaAssetId != snapshot.MediaAssetId ||
+            !string.Equals(
+                result.AnalysisAudioSha256,
+                snapshot.AnalysisAudioSha256,
+                StringComparison.Ordinal) ||
+            result.AnalysisAudioByteLength != snapshot.AnalysisAudioByteLength ||
+            result.AnalysisAudioSampleRateHz != snapshot.AnalysisAudioSampleRateHz ||
+            result.AnalysisAudioChannelCount != snapshot.AnalysisAudioChannelCount ||
+            result.AnalysisAudioSampleCount != snapshot.AnalysisAudioSampleCount ||
+            result.AnalysisAudioDurationMicroseconds != snapshot.AnalysisAudioDurationMicroseconds ||
+            !string.Equals(
+                result.PreprocessingContractSha256,
+                snapshot.PreprocessingContractSha256,
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                result.ObservationContractVersion,
+                snapshot.ObservationContractVersion,
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                result.ObservationContractSha256,
+                snapshot.ObservationContractSha256,
+                StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "The audio-observation result does not match the job's immutable source and contract snapshot.",
+                nameof(result));
+        }
+    }
+
+    private static void ValidateAudioObservationResult(StoredAudioObservationResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        ValidateRequiredId(result.MediaAssetId, nameof(result.MediaAssetId));
+        ValidateObservationContractVersion(
+            result.ObservationContractVersion,
+            nameof(result.ObservationContractVersion));
+        if (!IsLowercaseSha256(result.AnalysisAudioSha256) ||
+            !IsLowercaseSha256(result.PreprocessingContractSha256) ||
+            !IsLowercaseSha256(result.ObservationContractSha256))
+        {
+            throw new ArgumentException(
+                "Audio-observation source and contract hashes must be lowercase SHA-256 values.",
+                nameof(result));
+        }
+
+        if (result.AnalysisAudioByteLength <= 0 ||
+            result.AnalysisAudioSampleRateHz <= 0 ||
+            result.AnalysisAudioChannelCount <= 0 ||
+            result.AnalysisAudioSampleCount <= 0 ||
+            result.AnalysisAudioDurationMicroseconds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(result),
+                "Audio-observation source geometry and timing values must be positive.");
+        }
+
+        if (result.MinimumSignedSample is < short.MinValue or > short.MaxValue ||
+            result.MaximumSignedSample is < short.MinValue or > short.MaxValue ||
+            result.MinimumSignedSample > result.MaximumSignedSample)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(result),
+                "Observed signed-sample extrema must be ordered 16-bit PCM values.");
+        }
+
+        var expectedPeak = Math.Max(
+            Math.Abs((long)result.MinimumSignedSample),
+            Math.Abs((long)result.MaximumSignedSample));
+        if (result.AbsolutePeakSample != expectedPeak)
+        {
+            throw new ArgumentException(
+                "The absolute peak must equal the magnitude of the observed signed-sample extrema.",
+                nameof(result));
+        }
+
+        if (result.PositiveSampleCount < 0 ||
+            result.NegativeSampleCount < 0 ||
+            result.ZeroSampleCount < 0 ||
+            result.PositiveFullScaleSampleCount < 0 ||
+            result.NegativeFullScaleSampleCount < 0 ||
+            result.AdjacentOppositeSignCrossingCount < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(result),
+                "Audio-observation counts cannot be negative.");
+        }
+
+        var sampleCount = new BigInteger(result.AnalysisAudioSampleCount);
+        var classifiedCount = new BigInteger(result.PositiveSampleCount) +
+            result.NegativeSampleCount + result.ZeroSampleCount;
+        if (classifiedCount != sampleCount)
+        {
+            throw new ArgumentException(
+                "Positive, negative, and zero sample counts must partition the source samples exactly.",
+                nameof(result));
+        }
+
+        if ((result.PositiveSampleCount == 0) != (result.MaximumSignedSample <= 0) ||
+            (result.NegativeSampleCount == 0) != (result.MinimumSignedSample >= 0) ||
+            result.ZeroSampleCount > 0 &&
+            (result.MinimumSignedSample > 0 || result.MaximumSignedSample < 0) ||
+            result.ZeroSampleCount == 0 &&
+            (result.MinimumSignedSample == 0 || result.MaximumSignedSample == 0))
+        {
+            throw new ArgumentException(
+                "Signed-sample extrema and sign counts are inconsistent.",
+                nameof(result));
+        }
+
+        if (result.PositiveFullScaleSampleCount > result.PositiveSampleCount ||
+            result.NegativeFullScaleSampleCount > result.NegativeSampleCount ||
+            (result.PositiveFullScaleSampleCount > 0) != (result.MaximumSignedSample == short.MaxValue) ||
+            (result.NegativeFullScaleSampleCount > 0) != (result.MinimumSignedSample == short.MinValue))
+        {
+            throw new ArgumentException(
+                "Full-scale sample counts are inconsistent with the observed extrema and sign counts.",
+                nameof(result));
+        }
+
+        if (result.AdjacentOppositeSignCrossingCount >= result.AnalysisAudioSampleCount)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(result),
+                "Adjacent opposite-sign crossings cannot equal or exceed the source sample count.");
+        }
+
+        var exactSum = ParseCanonicalInvariantInteger(
+            result.ExactSampleSum,
+            allowNegative: true,
+            nameof(result.ExactSampleSum));
+        var exactSquaredSum = ParseCanonicalInvariantInteger(
+            result.ExactSquaredSampleSum,
+            allowNegative: false,
+            nameof(result.ExactSquaredSampleSum));
+        var minimumPossibleSum = new BigInteger(result.MinimumSignedSample) * sampleCount;
+        var maximumPossibleSum = new BigInteger(result.MaximumSignedSample) * sampleCount;
+        if (exactSum < minimumPossibleSum || exactSum > maximumPossibleSum)
+        {
+            throw new ArgumentException(
+                "The exact sample sum is outside the bounds implied by the observed extrema.",
+                nameof(result));
+        }
+
+        var peakSquared = new BigInteger(result.AbsolutePeakSample) * result.AbsolutePeakSample;
+        if (exactSquaredSum < peakSquared || exactSquaredSum > peakSquared * sampleCount)
+        {
+            throw new ArgumentException(
+                "The exact squared-sample sum is outside the bounds implied by the absolute peak.",
+                nameof(result));
+        }
+
+        if (result.MediaQualityState != MediaQualityState.NotAssessed ||
+            result.ModelApplicabilityState != ModelApplicabilityState.NotAssessed)
+        {
+            throw new ArgumentException(
+                "Audio observation must leave media quality and model applicability not assessed.",
+                nameof(result));
+        }
+
+        if (result.ObservedAtUtc == default)
+        {
+            throw new ArgumentException("An audio-observation timestamp is required.", nameof(result));
+        }
+    }
+
+    private static BigInteger ParseCanonicalInvariantInteger(
+        string value,
+        bool allowNegative,
+        string parameterName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value, parameterName);
+        if (value.Length > 64 ||
+            !BigInteger.TryParse(
+                value,
+                NumberStyles.AllowLeadingSign,
+                CultureInfo.InvariantCulture,
+                out var parsed) ||
+            !string.Equals(
+                value,
+                parsed.ToString(CultureInfo.InvariantCulture),
+                StringComparison.Ordinal) ||
+            !allowNegative && parsed.Sign < 0)
+        {
+            throw new ArgumentException(
+                "The exact aggregate must be canonical invariant decimal text.",
+                parameterName);
+        }
+
+        return parsed;
+    }
+
+    private static void ValidateObservationContractVersion(string value, string parameterName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value, parameterName);
+        if (value.Length > MaximumProbeTextLength || value.Any(char.IsControl))
+        {
+            throw new ArgumentException(
+                "The observation contract version is too long or contains control characters.",
+                parameterName);
+        }
+    }
+
     private static void ValidateExactPreprocessingArtifactPath(
         string actual,
         string expected,
@@ -4812,6 +6056,36 @@ public sealed class SqliteProfileStore
         if (resemblesRawOutput)
         {
             return "Media preprocessing failed; detailed tool output was not retained.";
+        }
+
+        var sanitized = new string(trimmed
+            .Select(character => char.IsControl(character) ? ' ' : character)
+            .ToArray());
+        if (sanitized.Length > MaximumStoredErrorLength)
+        {
+            sanitized = sanitized[..MaximumStoredErrorLength];
+        }
+
+        return sanitized.Length == 0 ? null : sanitized;
+    }
+
+    private static string? SanitizeAudioObservationFailure(string? failure)
+    {
+        if (string.IsNullOrWhiteSpace(failure))
+        {
+            return null;
+        }
+
+        var trimmed = failure.Trim();
+        var resemblesRawOutput = trimmed.Length > 512 ||
+            trimmed.Any(char.IsControl) ||
+            trimmed.IndexOfAny(['{', '}', '[', ']', '\\']) >= 0 ||
+            trimmed.Contains("/", StringComparison.Ordinal) ||
+            trimmed.Contains(":\\", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Contains("file:", StringComparison.OrdinalIgnoreCase);
+        if (resemblesRawOutput)
+        {
+            return "Audio observation extraction failed; detailed tool output was not retained.";
         }
 
         var sanitized = new string(trimmed

@@ -20,7 +20,7 @@ public sealed class SqliteProfileStoreMediaIngestTests
         var restartedStore = new SqliteProfileStore(database.DatabasePath, createIfMissing: false);
         await restartedStore.InitializeAsync();
 
-        Assert.Equal(6L, await ReadSchemaVersionAsync(database.DatabasePath));
+        Assert.Equal(7L, await ReadSchemaVersionAsync(database.DatabasePath));
         Assert.True(await TableHasColumnAsync(database.DatabasePath, "training_videos", "media_asset_id"));
         Assert.True(await TableExistsAsync(database.DatabasePath, "media_assets"));
         Assert.True(await TableExistsAsync(database.DatabasePath, "processing_jobs"));

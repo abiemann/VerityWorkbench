@@ -34,7 +34,7 @@
                     VerticalAlignment="Center"
                     Background="{ThemeResource AccentFillColorSecondaryBrush}"
                     CornerRadius="16">
-                    <TextBlock Text="Milestone 7 · recording dependency groups" />
+                    <TextBlock Text="Milestone 8 · objective audio observations" />
                 </Border>
             </Grid>
         </Border>
@@ -55,7 +55,7 @@
                     <StackPanel Spacing="4">
                         <TextBlock FontWeight="SemiBold" Text="Research limitation" />
                         <TextBlock
-                            Text="This is not a general-purpose lie detector. Recording dependency groups preserve user-declared relationships between clips for future evaluation splits; they are metadata, not independent observations or model results. This milestone does not assess identity, authenticity, language, media quality, model applicability, behavior, truth, or deception."
+                            Text="This is not a general-purpose lie detector. This milestone records label-blind, whole-file PCM measurements from prepared analysis audio. It does not detect speech, identity, language, media quality, model applicability, behavior, truth, or deception."
                             TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>

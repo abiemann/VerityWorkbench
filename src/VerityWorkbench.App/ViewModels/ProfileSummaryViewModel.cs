@@ -73,12 +73,15 @@ public sealed class ProfileSummaryViewModel : INotifyPropertyChanged
     public bool CanProcessData => Readiness is not "IngestingMedia"
         and not "ValidatingMedia"
         and not "PreprocessingMedia"
+        and not "ExtractingAudioObservations"
         and not "MediaIntegrityFailed"
         && (PendingMediaCount > 0
             || Readiness is "MediaIngestedAwaitingProbe"
                 or "MediaValidationFailed"
                 or "MediaValidated"
-                or "MediaPreprocessingFailed");
+                or "MediaPreprocessingFailed"
+                or "MediaPrepared"
+                or "AudioObservationFailed");
 
     public string Status => _liveStatus ?? Readiness switch
     {
@@ -89,7 +92,10 @@ public sealed class ProfileSummaryViewModel : INotifyPropertyChanged
         "MediaValidated" => "Media validated — awaiting preprocessing",
         "PreprocessingMedia" => "Media preprocessing in progress",
         "MediaPreprocessingFailed" => "Media preprocessing needs attention",
-        "MediaPrepared" => "Media prepared — quality and applicability not assessed",
+        "MediaPrepared" => "Media prepared — objective audio observations pending; quality and applicability not assessed",
+        "ExtractingAudioObservations" => "Objective audio observation extraction in progress",
+        "AudioObservationFailed" => "Objective audio observation extraction needs attention",
+        "AudioObserved" => "Media prepared — objective audio observations recorded; quality and applicability not assessed",
         "MediaIntegrityFailed" => "Workspace media changed — repair required",
         _ => "Draft — not processed",
     };

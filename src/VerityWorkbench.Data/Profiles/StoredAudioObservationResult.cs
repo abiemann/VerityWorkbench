@@ -1,0 +1,27 @@
+namespace VerityWorkbench.Data.Profiles;
+
+public sealed record StoredAudioObservationResult(
+    Guid MediaAssetId,
+    string AnalysisAudioSha256,
+    long AnalysisAudioByteLength,
+    int AnalysisAudioSampleRateHz,
+    int AnalysisAudioChannelCount,
+    long AnalysisAudioSampleCount,
+    long AnalysisAudioDurationMicroseconds,
+    string PreprocessingContractSha256,
+    string ObservationContractVersion,
+    string ObservationContractSha256,
+    int MinimumSignedSample,
+    int MaximumSignedSample,
+    int AbsolutePeakSample,
+    long PositiveSampleCount,
+    long NegativeSampleCount,
+    long ZeroSampleCount,
+    long PositiveFullScaleSampleCount,
+    long NegativeFullScaleSampleCount,
+    long AdjacentOppositeSignCrossingCount,
+    string ExactSampleSum,
+    string ExactSquaredSampleSum,
+    MediaQualityState MediaQualityState,
+    ModelApplicabilityState ModelApplicabilityState,
+    DateTimeOffset ObservedAtUtc);

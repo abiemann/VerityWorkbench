@@ -42,10 +42,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (!string.Equals(
-                selected.Readiness,
-                ProfileReadiness.MediaPrepared.ToString(),
-                StringComparison.Ordinal))
+        if (!CanReviewPreparedMedia(selected.Readiness))
         {
             StatusText.Text = "Prepared-media review is available only after every active asset has completed deterministic preprocessing.";
             return;
@@ -77,10 +74,7 @@ public sealed partial class MainWindow
             var profileStore = CreateProfileStore(selected.WorkspaceRoot);
             var profile = await profileStore.GetByIdAsync(selected.Id, loadCancellation.Token)
                 ?? throw new KeyNotFoundException("The selected profile no longer exists.");
-            if (!string.Equals(
-                    profile.Readiness,
-                    ProfileReadiness.MediaPrepared.ToString(),
-                    StringComparison.Ordinal))
+            if (!CanReviewPreparedMedia(profile.Readiness))
             {
                 throw new InvalidOperationException(
                     "The selected profile is no longer ready for prepared-media review.");

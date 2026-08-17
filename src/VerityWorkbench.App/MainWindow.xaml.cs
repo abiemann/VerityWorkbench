@@ -31,6 +31,7 @@ public sealed partial class MainWindow : Window
     private readonly LocalMediaStagingService _localMediaStagingService = new();
     private readonly MediaValidationService _mediaValidationService = new();
     private readonly MediaPreprocessingService _mediaPreprocessingService = new();
+    private readonly AudioPcmObservationService _audioPcmObservationService = new();
     private readonly SqliteProfileCatalog _profileCatalog;
     private EditorMode _editorMode;
     private StoredProfile? _editingProfile;
@@ -198,6 +199,8 @@ public sealed partial class MainWindow : Window
                 "Cancelling media validation and closing FFmpeg files and processes…",
             ProcessingJobKind.MediaPreprocessing =>
                 "Cancelling media preprocessing and closing FFmpeg files and processes…",
+            ProcessingJobKind.AudioObservationExtraction =>
+                "Cancelling objective audio observation extraction and closing the analysis-audio file…",
             _ => "Cancelling media ingest and closing open files…",
         };
         _activeProcessingCancellation.Cancel();
@@ -293,9 +296,28 @@ public sealed partial class MainWindow : Window
                     return;
                 }
 
-                if (profile.Readiness is nameof(ProfileReadiness.MediaValidated)
-                    or nameof(ProfileReadiness.MediaPreprocessingFailed)
-                    or nameof(ProfileReadiness.MediaPrepared))
+                if (string.Equals(
+                        profile.Readiness,
+                        ProfileReadiness.AudioObserved.ToString(),
+                        StringComparison.Ordinal))
+                {
+                    selected.SetLiveStatus(null);
+                    StatusText.Text = "Objective analysis-audio observations are already recorded for every active prepared asset. Quality and model applicability remain not assessed; no scoring was performed.";
+                    return;
+                }
+
+                if (profile.Readiness is nameof(ProfileReadiness.MediaPrepared)
+                    or nameof(ProfileReadiness.AudioObservationFailed))
+                {
+                    await RunAudioObservationExtractionAsync(
+                        selected,
+                        profileStore,
+                        profile,
+                        layout,
+                        processingCancellation);
+                }
+                else if (profile.Readiness is nameof(ProfileReadiness.MediaValidated)
+                    or nameof(ProfileReadiness.MediaPreprocessingFailed))
                 {
                     await RunMediaPreprocessingAsync(
                         selected,
@@ -3407,10 +3429,7 @@ public sealed partial class MainWindow : Window
         ReviewPreparedMediaButton.IsEnabled = _profileStorageReady
             && !processingInThisWindow
             && !_preparedMediaReviewIsOpen
-            && string.Equals(
-                selected?.Readiness,
-                ProfileReadiness.MediaPrepared.ToString(),
-                StringComparison.Ordinal);
+            && CanReviewPreparedMedia(selected?.Readiness);
         CancelProcessingButton.IsEnabled = processingInThisWindow && _processingCanBeCancelled;
         RefreshProfilesButton.IsEnabled = _profileStorageReady && !processingInThisWindow;
     }
@@ -3418,7 +3437,13 @@ public sealed partial class MainWindow : Window
     private static bool IsProcessingReadiness(string readiness) =>
         readiness == ProfileReadiness.IngestingMedia.ToString()
         || readiness == ProfileReadiness.ValidatingMedia.ToString()
-        || readiness == ProfileReadiness.PreprocessingMedia.ToString();
+        || readiness == ProfileReadiness.PreprocessingMedia.ToString()
+        || readiness == ProfileReadiness.ExtractingAudioObservations.ToString();
+
+    private static bool CanReviewPreparedMedia(string? readiness) =>
+        readiness is nameof(ProfileReadiness.MediaPrepared)
+            or nameof(ProfileReadiness.AudioObservationFailed)
+            or nameof(ProfileReadiness.AudioObserved);
 
     private void ShowValidation(IEnumerable<string> messages)
     {
